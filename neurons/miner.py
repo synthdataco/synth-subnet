@@ -103,6 +103,13 @@ class Miner(BaseMinerNeuron):
             return True, "Unrecognized hotkey"
 
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+
+        if not self.metagraph.axons[uid].is_serving:
+            bt.logging.info(
+                f"Denying hotkey {synapse.dendrite.hotkey}: no registered axon on-chain"
+            )
+            return True, "No registered axon"
+
         stake = self.metagraph.S[uid]
         bt.logging.info(f"Requesting UID: {uid} | Stake at UID: {stake}")
         if stake <= self.config.blacklist.validator_min_stake:

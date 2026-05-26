@@ -65,11 +65,14 @@ class BaseValidatorNeuron(BaseNeuron):
         # Init sync with the network. Updates the metagraph.
         self.sync()
 
-        # Serve axon to enable external connections.
+        # Register egress IP on-chain via Fiber (regardless of axon_off).
+        self.register_ip_via_fiber()
+
+        # Optionally serve a local axon HTTP server for external connections.
         if not self.config.neuron.axon_off:
             self.serve_axon()
         else:
-            bt.logging.warning("axon off, not serving ip to chain.")
+            bt.logging.warning("axon off, not starting local axon server.")
 
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
@@ -101,6 +104,61 @@ class BaseValidatorNeuron(BaseNeuron):
             bt.logging.error(
                 f"Failed to create Axon initialize with exception: {e}"
             )
+
+    def register_ip_via_fiber(self):
+        """Detect egress IP and register it on-chain using Fiber."""
+        import os
+        import httpx as _httpx
+        from fiber.chain import interface as fiber_interface
+        from fiber.chain import post_ip_to_chain
+
+        external_ip = os.environ.get("EXTERNAL_IP")
+        if external_ip:
+            bt.logging.info(f"Using EXTERNAL_IP from environment: {external_ip}")
+        else:
+            try:
+                resp = _httpx.get("https://checkip.amazonaws.com", timeout=10)
+                resp.raise_for_status()
+                external_ip = resp.text.strip()
+            except Exception as e:
+                bt.logging.error(f"Failed to detect egress IP: {e}")
+                return
+
+        external_port = self.config.axon.port
+
+        chain_endpoint = getattr(self.config.subtensor, "chain_endpoint", None)
+        network = getattr(self.config.subtensor, "network", None)
+        substrate = fiber_interface.get_substrate(
+            subtensor_address=chain_endpoint,
+            subtensor_network=network,
+        )
+
+        hotkey_keypair = self.wallet.hotkey
+        coldkey_ss58 = self.wallet.coldkeypub.ss58_address
+
+        bt.logging.info(
+            f"Registering egress IP {external_ip}:{external_port} on-chain via Fiber..."
+        )
+
+        try:
+            success = post_ip_to_chain.post_node_ip_to_chain(
+                substrate=substrate,
+                keypair=hotkey_keypair,
+                netuid=self.config.netuid,
+                external_ip=external_ip,
+                external_port=external_port,
+                coldkey_ss58_address=coldkey_ss58,
+            )
+        except Exception as e:
+            bt.logging.error(f"Fiber IP registration extrinsic failed: {e}")
+            return
+
+        if success:
+            bt.logging.info(
+                f"Registered egress IP {external_ip}:{external_port} on-chain via Fiber"
+            )
+        else:
+            bt.logging.error("Failed to register IP on-chain via Fiber")
 
     def run(self):
         """
