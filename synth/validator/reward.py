@@ -356,6 +356,9 @@ def get_rewards_multiprocess(
     )
 
     if prompt_scores is None:
+        bt.logging.warning(
+            f"All predictions invalid for request {validator_request.id}. Skipping."
+        )
         return None, [], []
 
     detailed_info = _build_detailed_info(
