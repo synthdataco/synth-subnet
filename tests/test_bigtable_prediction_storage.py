@@ -262,6 +262,43 @@ def test_write_predictions_raises_when_any_mutate_fails():
         )
 
 
+def test_write_predictions_chunks_large_batches(monkeypatch):
+    """A single mutate_rows RPC must stay under the server's 260 MiB limit.
+    With many large `low` rows the batch is split across multiple RPCs and
+    the per-row statuses are stitched back together in order."""
+    storage = _make_storage_with_mock_tables()
+    storage._tables["low"].direct_row.side_effect = lambda key: MagicMock(
+        key=key
+    )
+
+    # Force tiny chunks so 3 rows split into 3 separate RPCs: each row's
+    # blob is 2 sims x 3 steps x 4 bytes = 24 bytes; cap below 2 rows' worth.
+    monkeypatch.setattr(bps, "_MAX_MUTATE_BYTES", 30)
+
+    def _statuses_for(chunk):
+        return [MagicMock(code=0) for _ in chunk]
+
+    storage._tables["low"].mutate_rows.side_effect = _statuses_for
+
+    prediction = _make_production_prediction(2, 3)
+    sim_input = _low_sim_input()
+    miner_predictions = {
+        uid: (prediction, CORRECT, "1.0") for uid in (10, 11, 12)
+    }
+    miner_id_map = {10: 100, 11: 101, 12: 102}
+
+    keys = storage.write_predictions(
+        simulation_input=sim_input,
+        miner_predictions=miner_predictions,
+        miner_id_map=miner_id_map,
+    )
+
+    # All three miners committed, despite the batch being split.
+    assert set(keys.keys()) == {10, 11, 12}
+    # 24 bytes/row, 30-byte cap → one row per RPC → 3 calls.
+    assert storage._tables["low"].mutate_rows.call_count == 3
+
+
 def test_read_predictions_missing_rows_return_empty():
     storage = _make_storage_with_mock_tables()
     # Range scan returns no rows — every requested key stays [].
