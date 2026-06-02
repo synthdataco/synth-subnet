@@ -28,6 +28,9 @@ from synth.validator import prompt_config, response_validation_v2
 COLUMN_FAMILY = "p"
 COLUMN_QUALIFIER = b"d"
 
+# Cap the bytes carried by a single mutate_rows RPC
+_MAX_MUTATE_BYTES = 100 * 1024 * 1024
+
 # Zero-pad miner_id so lexicographic order inside a range scan matches
 # numeric order. 6 digits cover the foreseeable miners.id space (Postgres
 # bigint surrogate; growing slowly).
@@ -119,6 +122,7 @@ class BigtablePredictionStorage:
         start_time_unix = _start_time_to_unix(simulation_input.start_time)
 
         rows = []
+        row_sizes = []
         keys_by_miner_uid: dict = {}
         for miner_uid, (
             prediction,
@@ -143,12 +147,13 @@ class BigtablePredictionStorage:
             row = table.direct_row(key)
             row.set_cell(COLUMN_FAMILY, COLUMN_QUALIFIER, blob)
             rows.append(row)
+            row_sizes.append(len(blob))
             keys_by_miner_uid[miner_uid] = key
 
         if not rows:
             return keys_by_miner_uid
 
-        statuses = table.mutate_rows(rows) or []
+        statuses = _mutate_rows_chunked(table, rows, row_sizes)
         keys = list(keys_by_miner_uid.values())
         if len(statuses) != len(rows):
             # Server didn't confirm every row — we can't tell which landed.
@@ -261,6 +266,35 @@ class BigtablePredictionStorage:
             raise ValueError(
                 f"unsupported prompt_label for Bigtable: {prompt_label!r}"
             ) from exc
+
+
+def _mutate_rows_chunked(table, rows: list, row_sizes: list) -> list:
+    """Send `rows` via mutate_rows in size-bounded chunks.
+
+    One MutateRows RPC must stay under the server's 260 MiB receive limit
+    (see `_MAX_MUTATE_BYTES`). We accumulate rows until the next one would
+    cross the cap, flush that chunk, then continue. The blob dominates each
+    row's wire size, so `row_sizes` (blob byte lengths) is a close-enough
+    proxy with the cap left well below the hard limit.
+
+    Returns the per-row statuses concatenated in `rows` order, so the
+    caller's `zip(keys, statuses)` stays aligned. A row larger than the cap
+    still gets sent on its own — if it also exceeds the hard server limit the
+    RPC raises, which is the right outcome (we can't split a single cell).
+    """
+    statuses: list = []
+    chunk: list = []
+    chunk_bytes = 0
+    for row, size in zip(rows, row_sizes):
+        if chunk and chunk_bytes + size > _MAX_MUTATE_BYTES:
+            statuses.extend(table.mutate_rows(chunk) or [])
+            chunk = []
+            chunk_bytes = 0
+        chunk.append(row)
+        chunk_bytes += size
+    if chunk:
+        statuses.extend(table.mutate_rows(chunk) or [])
+    return statuses
 
 
 def _start_time_to_unix(start_time_str: str) -> int:

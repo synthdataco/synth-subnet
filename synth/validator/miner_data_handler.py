@@ -445,17 +445,18 @@ class MinerDataHandler:
         with `bigtable_key IS NOT NULL` — passed in so we don't filter twice.
         """
         if self.bigtable_storage is None:
-            bt.logging.error(
-                "found bigtable-backed predictions but no bigtable "
-                "storage is configured on this validator; treating them "
-                "as missing"
+            # Bigtable-backed rows can't be hydrated without the storage
+            # client. Treating them as missing would silently mis-score
+            # every miner whose prediction lives in Bigtable, so fail the
+            # read instead and let the caller surface it.
+            raise RuntimeError(
+                "found bigtable-backed predictions but no bigtable storage "
+                "is configured on this validator"
             )
-            paths_by_key: dict = {}
-        else:
-            paths_by_key = self.bigtable_storage.read_predictions(
-                validator_request,
-                [r.bigtable_key for r in bigtable_rows],
-            )
+        paths_by_key = self.bigtable_storage.read_predictions(
+            validator_request,
+            [r.bigtable_key for r in bigtable_rows],
+        )
 
         start_ts = int(validator_request.start_time.timestamp())
         time_increment = int(validator_request.time_increment)
