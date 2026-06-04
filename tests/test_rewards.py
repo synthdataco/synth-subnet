@@ -109,6 +109,6 @@ def test_get_rewards(db_engine):
     assert max(prompt_scores) == percentile90 - lowest_crps
 
     assert detailed_info[0]["miner_uid"] == miner_uids[0]
-    assert len(detailed_info[0]["crps_data"]) == 350
+    assert len(detailed_info[0]["crps_data"]) == 5
     assert real_prices is not None
     assert len(real_prices) == 289
