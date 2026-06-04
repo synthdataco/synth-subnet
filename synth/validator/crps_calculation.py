@@ -30,7 +30,8 @@ def calculate_crps_for_miner(
     """
     # Initialize lists to store detailed CRPS data
     detailed_crps_data: list[dict] = []
-    sum_all_scores = 0.0
+    sum_all_scores = 0.0    
+    gap_total_crps = 0.0
 
     for interval_name, interval_seconds in scoring_intervals.items():
         interval_steps = get_interval_steps(interval_seconds, time_increment)
@@ -72,7 +73,6 @@ def calculate_crps_for_miner(
             continue
 
         # Calculate CRPS over intervals
-        total_increment = 0
         crps_values = 0.0
         for block in np.unique(data_blocks):
             # skip missing value blocks
@@ -99,18 +99,10 @@ def calculate_crps_for_miner(
                     crps_values_block / real_price_path[-1] * 10_000
                 )
 
-            crps_values += crps_values_block.sum()
-
-            # Build detailed data in bulk
-            for t in range(num_intervals):
-                detailed_crps_data.append(
-                    {
-                        "Interval": interval_name,
-                        "Increment": total_increment + 1,
-                        "CRPS": crps_values_block[t],
-                    }
-                )
-                total_increment += 1
+            block_sum = crps_values_block.sum()
+            crps_values += block_sum
+            if is_gap:
+                gap_total_crps += block_sum
 
         # Total CRPS for this interval
         total_crps_interval = crps_values
@@ -122,6 +114,11 @@ def calculate_crps_for_miner(
                 "Increment": "Total",
                 "CRPS": total_crps_interval,
             }
+        )
+
+    if gap_total_crps > 0:
+        detailed_crps_data.append(
+            {"Interval": "Gaps", "Increment": "Total", "CRPS": gap_total_crps}
         )
 
     detailed_crps_data.append(
