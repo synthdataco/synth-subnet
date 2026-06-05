@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 
-import bittensor as bt
 from dotenv import load_dotenv
 from sqlalchemy import bindparam, select, update
 
@@ -65,9 +64,8 @@ def trim_crps_data(crps_data: list[dict]) -> list[dict]:
     return trimmed
 
 
-def main(apply: bool, batch_size: int) -> None:
+def main(apply: bool, batch_size: int, after_id: int) -> None:
     engine = get_engine()
-    after_id = 0
     scanned = 0
     changed = 0
 
@@ -80,6 +78,7 @@ def main(apply: bool, batch_size: int) -> None:
                 .limit(batch_size)
             ).all()
             if not rows:
+                print("no more rows to scan")
                 break
 
             updates = []
@@ -110,13 +109,13 @@ def main(apply: bool, batch_size: int) -> None:
         scanned += len(rows)
         changed += len(updates)
         after_id = rows[-1].id
-        bt.logging.info(
+        print(
             f"trim progress: scanned={scanned} changed={changed} "
             f"(last id={after_id})"
         )
 
     verb = "updated" if apply else "would update (dry run)"
-    bt.logging.info(f"trim done: {verb} {changed}/{scanned} rows")
+    print(f"trim done: {verb} {changed}/{scanned} rows")
 
 
 if __name__ == "__main__":
@@ -134,5 +133,11 @@ if __name__ == "__main__":
         default=1000,
         help="rows scanned per id-keyset batch (default: 1000)",
     )
+    parser.add_argument(
+        "--after-id",
+        type=int,
+        default=0,
+        help="start scanning after this ID (default: 0)",
+    )
     args = parser.parse_args()
-    main(apply=args.apply, batch_size=args.batch_size)
+    main(apply=args.apply, batch_size=args.batch_size, after_id=args.after_id)
