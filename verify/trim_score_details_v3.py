@@ -26,7 +26,7 @@ import argparse
 
 import bittensor as bt
 from dotenv import load_dotenv
-from sqlalchemy import select, update
+from sqlalchemy import bindparam, select, update
 
 from synth.db.models import MinerScore, get_engine
 
@@ -41,9 +41,6 @@ def trim_crps_data(crps_data: list[dict]) -> list[dict]:
     the order the live writer produces. Error payloads (e.g.
     ``[{"error": ...}]``) and anything without ``Total`` rows are left as-is.
     """
-    if not isinstance(crps_data, list):
-        return crps_data
-
     totals = [d for d in crps_data if d.get("Increment") == "Total"]
     if not totals:
         return crps_data
@@ -98,13 +95,17 @@ def main(apply: bool, batch_size: int) -> None:
                     continue
                 updates.append((row.id, {**details, "crps_data": trimmed}))
 
-            if apply:
-                for score_id, new_details in updates:
-                    connection.execute(
-                        update(MinerScore)
-                        .where(MinerScore.id == score_id)
-                        .values(score_details_v3=new_details)
-                    )
+            if apply and updates:
+                # executemany: one round-trip per batch, not per row.
+                connection.execute(
+                    update(MinerScore)
+                    .where(MinerScore.id == bindparam("b_id"))
+                    .values(score_details_v3=bindparam("b_details")),
+                    [
+                        {"b_id": score_id, "b_details": new_details}
+                        for score_id, new_details in updates
+                    ],
+                )
 
         scanned += len(rows)
         changed += len(updates)

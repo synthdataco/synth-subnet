@@ -82,8 +82,8 @@ def calculate_crps_for_miner(
         )
 
         # Total CRPS for this interval
-        total_crps_interval = crps_values
-        sum_all_scores += float(total_crps_interval)
+        total_crps_interval = float(crps_values)
+        sum_all_scores += total_crps_interval
         if is_gap:
             gap_total_crps += total_crps_interval
 
@@ -143,9 +143,9 @@ def sum_crps_over_blocks(
                 crps_values_block / real_price_path[-1] * 10_000
             )
 
-        crps_values += crps_values_block.sum()
+        crps_values += float(crps_values_block.sum())
 
-    return crps_values
+    return float(crps_values)
 
 
 def label_observed_blocks(arr: np.ndarray) -> np.ndarray:
