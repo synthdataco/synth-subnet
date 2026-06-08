@@ -111,11 +111,6 @@ def setup_gcp_logging(
             if cycle_label is not None:
                 labels["cycle_label"] = cycle_label
             client.setup_logging(log_level=logging.DEBUG, labels=labels)
-            listener = getattr(bt.logging, "_listener", None)
-            for stream_handler in getattr(listener, "handlers", ()):
-                if getattr(stream_handler, "stream", None) is sys.stdout:
-                    stream_handler.setLevel(logging.CRITICAL + 1)
-
             handler = next(
                 (
                     h
@@ -130,6 +125,14 @@ def setup_gcp_logging(
                 ),
                 None,
             )
+
+            # Only suppress stdout logging once we have confirmed a GCP handler is installed,
+            # otherwise we risk dropping logs entirely.
+            if handler is not None:
+                listener = getattr(bt.logging, "_listener", None)
+                for stream_handler in getattr(listener, "handlers", ()):
+                    if getattr(stream_handler, "stream", None) is sys.stdout:
+                        stream_handler.setLevel(logging.CRITICAL + 1)
 
     return handler, client
 
