@@ -398,11 +398,12 @@ class TestCalculateCrps(unittest.TestCase):
             sims, real_price_path, time_increment, scoring_intervals
         )
 
-        # Only "Total" rows remain after #273. A scored gap interval surfaces
-        # both as its own interval Total and the aggregate "Gaps" Total.
+        # Only "Total" rows remain after #273. Individual *_gaps intervals are
+        # folded into the single aggregate "Gaps" Total, not recorded per
+        # interval (matches the trim_score_details_v3 migration).
         intervals = [d["Interval"] for d in detailed]
         self.assertTrue(all(d["Increment"] == "Total" for d in detailed))
-        self.assertIn("0_5min_gaps", intervals)
+        self.assertNotIn("0_5min_gaps", intervals)
         self.assertIn("Gaps", intervals)
 
     def test_gap_produces_single_change(self):

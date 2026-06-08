@@ -85,7 +85,10 @@ def calculate_crps_for_miner(
         total_crps_interval = float(crps_values)
         sum_all_scores += total_crps_interval
         if is_gap:
+            # Individual *_gaps intervals are folded into the single "Gaps"
+            # Total appended below
             gap_total_crps += total_crps_interval
+            continue
 
         detailed_crps_data.append(
             {
