@@ -114,7 +114,9 @@ class BaseValidatorNeuron(BaseNeuron):
 
         external_ip = os.environ.get("EXTERNAL_IP")
         if external_ip:
-            bt.logging.info(f"Using EXTERNAL_IP from environment: {external_ip}")
+            bt.logging.info(
+                f"Using EXTERNAL_IP from environment: {external_ip}"
+            )
         else:
             try:
                 resp = _httpx.get("https://checkip.amazonaws.com", timeout=10)
