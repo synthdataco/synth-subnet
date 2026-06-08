@@ -398,12 +398,13 @@ class TestCalculateCrps(unittest.TestCase):
             sims, real_price_path, time_increment, scoring_intervals
         )
 
-        # With gap fix: only 1 CRPS evaluation (start to 5-min)
-        # Filter out the "Total" entries
-        increment_entries = [d for d in detailed if d["Increment"] != "Total"]
-        self.assertEqual(len(increment_entries), 1)
-        self.assertEqual(increment_entries[0]["Interval"], "0_5min_gaps")
-        self.assertEqual(increment_entries[0]["Increment"], 1)
+        # Only "Total" rows remain after #273. Individual *_gaps intervals are
+        # folded into the single aggregate "Gaps" Total, not recorded per
+        # interval (matches the trim_score_details_v3 migration).
+        intervals = [d["Interval"] for d in detailed]
+        self.assertTrue(all(d["Increment"] == "Total" for d in detailed))
+        self.assertNotIn("0_5min_gaps", intervals)
+        self.assertIn("Gaps", intervals)
 
     def test_gap_produces_single_change(self):
         """Gap intervals should compute only 1 price change
@@ -475,9 +476,9 @@ class TestCalculateCrps(unittest.TestCase):
             sims, real, time_increment, reg_intervals
         )
 
-        # Gap should produce fewer CRPS evaluations and a different total
-        gap_increments = [d for d in details_gap if d["Increment"] != "Total"]
-        reg_increments = [d for d in details_reg if d["Increment"] != "Total"]
-        self.assertEqual(len(gap_increments), 1)  # gap: 1 evaluation
-        self.assertEqual(len(reg_increments), 6)  # regular: 6 evaluations
+        # After #273 only "Total" rows remain, so the per-evaluation counts are
+        # no longer observable. The gap path still surfaces a "Gaps" aggregate
+        # the regular path lacks, and the totals differ.
+        self.assertIn("Gaps", [d["Interval"] for d in details_gap])
+        self.assertNotIn("Gaps", [d["Interval"] for d in details_reg])
         self.assertNotEqual(score_gap, score_reg)

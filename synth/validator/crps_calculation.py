@@ -31,6 +31,7 @@ def calculate_crps_for_miner(
     # Initialize lists to store detailed CRPS data
     detailed_crps_data: list[dict] = []
     sum_all_scores = 0.0
+    gap_total_crps = 0.0
 
     for interval_name, interval_seconds in scoring_intervals.items():
         interval_steps = get_interval_steps(interval_seconds, time_increment)
@@ -72,49 +73,22 @@ def calculate_crps_for_miner(
             continue
 
         # Calculate CRPS over intervals
-        total_increment = 0
-        crps_values = 0.0
-        for block in np.unique(data_blocks):
-            # skip missing value blocks
-            if block == -1:
-                continue
-
-            mask = data_blocks == block
-            simulated_changes_block = simulated_changes[:, mask]
-            real_changes_block = real_changes[0, mask]  # 1D array now
-            num_intervals = simulated_changes_block.shape[1]
-
-            # Calculate all CRPS values at once
-            crps_values_block = np.array(
-                [
-                    crps_ensemble(
-                        real_changes_block[t], simulated_changes_block[:, t]
-                    )
-                    for t in range(num_intervals)
-                ]
-            )
-
-            if absolute_price:
-                crps_values_block = (
-                    crps_values_block / real_price_path[-1] * 10_000
-                )
-
-            crps_values += crps_values_block.sum()
-
-            # Build detailed data in bulk
-            for t in range(num_intervals):
-                detailed_crps_data.append(
-                    {
-                        "Interval": interval_name,
-                        "Increment": total_increment + 1,
-                        "CRPS": crps_values_block[t],
-                    }
-                )
-                total_increment += 1
+        crps_values = sum_crps_over_blocks(
+            simulated_changes,
+            real_changes,
+            data_blocks,
+            absolute_price,
+            real_price_path,
+        )
 
         # Total CRPS for this interval
-        total_crps_interval = crps_values
-        sum_all_scores += float(total_crps_interval)
+        total_crps_interval = float(crps_values)
+        sum_all_scores += total_crps_interval
+        if is_gap:
+            # Individual *_gaps intervals are folded into the single "Gaps"
+            # Total appended below
+            gap_total_crps += total_crps_interval
+            continue
 
         detailed_crps_data.append(
             {
@@ -124,11 +98,57 @@ def calculate_crps_for_miner(
             }
         )
 
+    if gap_total_crps > 0:
+        detailed_crps_data.append(
+            {"Interval": "Gaps", "Increment": "Total", "CRPS": gap_total_crps}
+        )
+
     detailed_crps_data.append(
         {"Interval": "Overall", "Increment": "Total", "CRPS": sum_all_scores}
     )
 
     return sum_all_scores, detailed_crps_data
+
+
+def sum_crps_over_blocks(
+    simulated_changes: np.ndarray,
+    real_changes: np.ndarray,
+    data_blocks: np.ndarray,
+    absolute_price: bool,
+    real_price_path: np.ndarray,
+) -> float:
+    """
+    Sum the CRPS over the observed (non-missing) blocks of a single interval.
+    """
+    crps_values = 0.0
+    for block in np.unique(data_blocks):
+        # skip missing value blocks
+        if block == -1:
+            continue
+
+        mask = data_blocks == block
+        simulated_changes_block = simulated_changes[:, mask]
+        real_changes_block = real_changes[0, mask]  # 1D array now
+        num_intervals = simulated_changes_block.shape[1]
+
+        # Calculate all CRPS values at once
+        crps_values_block = np.array(
+            [
+                crps_ensemble(
+                    real_changes_block[t], simulated_changes_block[:, t]
+                )
+                for t in range(num_intervals)
+            ]
+        )
+
+        if absolute_price:
+            crps_values_block = (
+                crps_values_block / real_price_path[-1] * 10_000
+            )
+
+        crps_values += float(crps_values_block.sum())
+
+    return float(crps_values)
 
 
 def label_observed_blocks(arr: np.ndarray) -> np.ndarray:
