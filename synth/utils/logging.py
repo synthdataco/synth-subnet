@@ -1,13 +1,13 @@
 import inspect
 import functools
 import os
+import sys
 import logging
 from logging.handlers import RotatingFileHandler
 import time
 import bittensor as bt
 
 import google.cloud.logging
-from google.cloud.logging_v2.handlers import setup_logging
 import google.auth.exceptions
 
 EVENTS_LEVEL_NUM = 38
@@ -81,7 +81,7 @@ def setup_wandb_alert(wandb_run):
 def setup_gcp_logging(
     log_id_prefix: str | None, cycle_label: str | None = None
 ) -> tuple[
-    google.cloud.logging.handlers.CloudLoggingHandler | None,
+    logging.Handler | None,
     google.cloud.logging.Client | None,
 ]:
     """
@@ -111,11 +111,28 @@ def setup_gcp_logging(
             if cycle_label is not None:
                 labels["cycle_label"] = cycle_label
             client.setup_logging(log_level=logging.DEBUG, labels=labels)
-            handler = google.cloud.logging.handlers.CloudLoggingHandler(client)
-            # handler = google.cloud.logging.handlers.StructuredLogHandler()
-            setup_logging(handler)
-            logging.getLogger().addHandler(handler)
-            logging.getLogger().setLevel(logging.DEBUG)
+            handler = next(
+                (
+                    h
+                    for h in logging.getLogger().handlers
+                    if isinstance(
+                        h,
+                        (
+                            google.cloud.logging.handlers.CloudLoggingHandler,
+                            google.cloud.logging.handlers.StructuredLogHandler,
+                        ),
+                    )
+                ),
+                None,
+            )
+
+            # Only suppress stdout logging once we have confirmed a GCP handler is installed,
+            # otherwise we risk dropping logs entirely.
+            if handler is not None:
+                listener = getattr(bt.logging, "_listener", None)
+                for stream_handler in getattr(listener, "handlers", ()):
+                    if getattr(stream_handler, "stream", None) is sys.stdout:
+                        stream_handler.setLevel(logging.CRITICAL + 1)
 
     return handler, client
 
