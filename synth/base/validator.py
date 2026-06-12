@@ -19,18 +19,13 @@
 
 
 import copy
-import os
 import numpy as np
 import asyncio
 import argparse
 import threading
 import bittensor as bt
-import httpx
 
 from typing import List, Union
-
-from fiber.chain import interface as fiber_interface
-from fiber.chain import post_ip_to_chain
 
 from synth.base.dendrite import SynthDendrite
 from synth.base.neuron import BaseNeuron
