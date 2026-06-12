@@ -297,6 +297,7 @@ The fastest way to validate your environment and the reference miner locally:
 git clone https://github.com/synthdataco/synth-subnet.git
 cd synth-subnet
 curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv, if you don't have it
+source $HOME/.local/bin/env                       # put uv on PATH in the current shell
 uv sync && source .venv/bin/activate
 python synth/miner/run.py   # prints "CORRECT" if the dummy model's output format is valid
 ```

@@ -268,7 +268,10 @@ Install [uv](https://docs.astral.sh/uv/) if you don't have it:
 
 ```shell
 curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
 ```
+
+> ⚠️ **NOTE**: The second command puts `uv` on the `PATH` of the current shell; new shells pick it up automatically.
 
 Create the virtual environment and install all locked dependencies:
 

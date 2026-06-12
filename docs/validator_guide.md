@@ -90,7 +90,10 @@ sudo npm install pm2 -g
 
 ```shell
 curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
 ```
+
+> ⚠️ **NOTE**: The second command puts `uv` on the `PATH` of the current shell; new shells pick it up automatically.
 
 **Step 8: Install the Python environment**
 
