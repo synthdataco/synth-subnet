@@ -20,3 +20,7 @@ Dockerfile
 # Ignore specific directories or files
 tests/
 docs/
+
+# Ignore local virtual environments
+.venv/
+bt_venv/

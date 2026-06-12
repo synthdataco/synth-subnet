@@ -264,25 +264,28 @@ cd ./synth-subnet
 
 #### 3.3.3. Set up & activate Python virtual environment
 
-Create a new Python virtual environment:
+Install [uv](https://docs.astral.sh/uv/) if you don't have it:
 
 ```shell
-python3.11 -m venv bt_venv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+```
+
+> ⚠️ **NOTE**: The second command puts `uv` on the `PATH` of the current shell; new shells pick it up automatically.
+
+Create the virtual environment and install all locked dependencies:
+
+```shell
+uv sync
 ```
 
 Activate and switch to the newly created Python virtual environment:
 
 ```shell
-source bt_venv/bin/activate
+source .venv/bin/activate
 ```
 
-> ⚠️ **NOTE**: This should activate the `bt_venv` environment, and you will see the command line prefixed with `(bt_venv)`.
-
-Install local Python dependencies within the virtual environment:
-
-```shell
-pip install -r requirements.txt
-```
+> ⚠️ **NOTE**: This should activate the `.venv` environment, and you will see the command line prefixed with `(.venv)`.
 
 <sup>[Back to top ^][table-of-contents]</sup>
 

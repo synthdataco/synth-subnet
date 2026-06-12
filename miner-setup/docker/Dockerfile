@@ -17,13 +17,15 @@ RUN apt-get update && \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN pip install --upgrade pip && pip install bittensor-cli
+COPY --from=ghcr.io/astral-sh/uv:0.10.12 /uv /uvx /bin/
 
 WORKDIR /app
 
 RUN git clone https://github.com/mode-network/synth-subnet.git . && \
-    pip install -r requirements.txt
+    uv sync --frozen --no-dev
 
+# Put the project venv first so python and btcli resolve to it
+ENV PATH="/app/.venv/bin:${PATH}"
 ENV PYTHONPATH="."
 
 COPY entrypoint.sh /app/entrypoint.sh

@@ -86,33 +86,30 @@ sudo apt update && \
 sudo npm install pm2 -g
 ```
 
-**Step 7: Install the Python environment**
+**Step 7: Install [uv](https://docs.astral.sh/uv/)**
 
 ```shell
-sudo apt install python3.11-venv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
 ```
 
-**Step 8: Create a new Python environment**
+> ⚠️ **NOTE**: The second command puts `uv` on the `PATH` of the current shell; new shells pick it up automatically.
+
+**Step 8: Install the Python environment**
+
+From the repository root, create the virtual environment and install all locked dependencies:
 
 ```shell
-python3.11 -m venv bt_venv
+uv sync
 ```
 
 **Step 9: Activate and switch to the newly created Python virtual environment**
 
 ```shell
-source bt_venv/bin/activate
+source .venv/bin/activate
 ```
 
-This should activate the `bt_venv` environment and you should see the command line prefixed with `(bt_venv)`.
-
-**Step 10: Install local Python dependencies**
-
-With the Python virtual environment active, install the Python dependencies:
-
-```shell
-pip install -r requirements.txt
-```
+This should activate the `.venv` environment and you should see the command line prefixed with `(.venv)`.
 
 ## 3. Create a Wallet
 
@@ -123,7 +120,7 @@ pip install -r requirements.txt
 If you haven't already, ensure you are running from the Python virtual environment:
 
 ```shell
-source bt_venv/bin/activate
+source .venv/bin/activate
 ```
 
 **Step 2: Create the cold/hot wallets**
@@ -218,7 +215,7 @@ btcli subnet metagraph \
 **Step 2: Activate the Python virtual environment**
 
 ```shell
-source bt_venv/bin/activate
+source .venv/bin/activate
 ```
 
 **Step 3: Run database migrations**

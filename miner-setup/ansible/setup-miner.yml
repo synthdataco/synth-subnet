@@ -98,15 +98,17 @@
         dest: "{{ install_dir }}"
         force: true
 
-    - name: Create Python virtual environment
-      command: python3.11 -m venv {{ install_dir }}/bt_venv
+    - name: Install uv
+      shell: curl -LsSf https://astral.sh/uv/install.sh | sh
       args:
-        creates: "{{ install_dir }}/bt_venv/bin/python3"
+        creates: /root/.local/bin/uv
+      environment:
+        HOME: /root
 
     - name: Install Python dependencies
-      pip:
-        requirements: "{{ install_dir }}/requirements.txt"
-        virtualenv: "{{ install_dir }}/bt_venv"
+      command: /root/.local/bin/uv sync --frozen --no-dev
+      args:
+        chdir: "{{ install_dir }}"
       environment:
         PATH: "/root/.cargo/bin:{{ ansible_env.PATH }}"
 
@@ -124,7 +126,7 @@
           - "Next steps:"
           - "  1. SSH into the VM"
           - "  2. Create wallet:"
-          - "     cd {{ install_dir }} && source bt_venv/bin/activate"
+          - "     cd {{ install_dir }} && source .venv/bin/activate"
           - "     btcli wallet create --wallet.name {{ wallet_name }} --wallet.hotkey {{ wallet_hotkey }}"
           - "  3. Fund wallet with >= 0.25 TAO"
           - "  4. Register on subnet:"

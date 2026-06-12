@@ -39,17 +39,16 @@ git clone https://github.com/mode-network/synth-subnet.git
 cd synth-subnet
 
 echo "=== Setting up Python environment ==="
-python3.11 -m venv bt_venv
-source bt_venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="/root/.local/bin:$PATH"
+uv sync --frozen --no-dev
 
 echo "=== Creating PM2 config ==="
 cat > /opt/synth-subnet/miner.config.js << 'PMEOF'
 module.exports = {
   apps: [{
     name: "miner",
-    interpreter: "/opt/synth-subnet/bt_venv/bin/python3",
+    interpreter: "/opt/synth-subnet/.venv/bin/python3",
     script: "./neurons/miner.py",
     args: "--netuid ${netuid} --subtensor.network ${network} --logging.debug --logging.trace --wallet.name ${wallet_name} --wallet.hotkey default --axon.port ${axon_port} --blacklist.force_validator_permit true --blacklist.validator_min_stake 1000",
     env: {
@@ -66,7 +65,7 @@ echo "============================================"
 echo ""
 echo "Next steps:"
 echo "  1. SSH into the VM"
-echo "  2. Create wallet:  cd /opt/synth-subnet && source bt_venv/bin/activate && btcli wallet create --wallet.name ${wallet_name} --wallet.hotkey default"
+echo "  2. Create wallet:  cd /opt/synth-subnet && source .venv/bin/activate && btcli wallet create --wallet.name ${wallet_name} --wallet.hotkey default"
 echo "  3. Fund wallet with >= 0.25 TAO"
 echo "  4. Register:       btcli subnet register --wallet.name ${wallet_name} --wallet.hotkey default --netuid ${netuid} --network ${network}"
 echo "  5. Start miner:    pm2 start miner.config.js"
