@@ -8,3 +8,5 @@ repos:
     rev: 7.1.2
     hooks:
       - id: flake8
+        # required for flake8 to read [tool.flake8] from pyproject.toml
+        additional_dependencies: [Flake8-pyproject==1.2.3]

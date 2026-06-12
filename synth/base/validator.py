@@ -19,13 +19,18 @@
 
 
 import copy
+import os
 import numpy as np
 import asyncio
 import argparse
 import threading
 import bittensor as bt
+import httpx
 
 from typing import List, Union
+
+from fiber.chain import interface as fiber_interface
+from fiber.chain import post_ip_to_chain
 
 from synth.base.dendrite import SynthDendrite
 from synth.base.neuron import BaseNeuron
@@ -107,11 +112,6 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def register_ip_via_fiber(self):
         """Detect egress IP and register it on-chain using Fiber."""
-        import os
-        import httpx as _httpx
-        from fiber.chain import interface as fiber_interface
-        from fiber.chain import post_ip_to_chain
-
         external_ip = os.environ.get("EXTERNAL_IP")
         if external_ip:
             bt.logging.info(
@@ -119,7 +119,7 @@ class BaseValidatorNeuron(BaseNeuron):
             )
         else:
             try:
-                resp = _httpx.get("https://checkip.amazonaws.com", timeout=10)
+                resp = httpx.get("https://checkip.amazonaws.com", timeout=10)
                 resp.raise_for_status()
                 external_ip = resp.text.strip()
             except Exception as e:
