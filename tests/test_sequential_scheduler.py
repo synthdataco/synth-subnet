@@ -103,12 +103,15 @@ class TestSelectDelay(unittest.TestCase):
         # → delay would be non-positive, fallback to next minute boundary.
         cycle_start_time = datetime(2026, 5, 14, 14, 0, 0, tzinfo=timezone.utc)
         now = datetime(2026, 5, 14, 14, 10, 15, tzinfo=timezone.utc)
-        with patch(
-            "synth.utils.sequential_scheduler.get_current_time",
-            return_value=now,
-        ), patch(
-            "synth.utils.sequential_scheduler.bt.logging.warning"
-        ) as warn_mock:
+        with (
+            patch(
+                "synth.utils.sequential_scheduler.get_current_time",
+                return_value=now,
+            ),
+            patch(
+                "synth.utils.sequential_scheduler.bt.logging.warning"
+            ) as warn_mock,
+        ):
             delay = SequentialScheduler.select_delay(
                 cycle_start_time=cycle_start_time,
                 prompt_config=_config(cycle_interval_minutes=5),

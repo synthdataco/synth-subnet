@@ -296,8 +296,8 @@ The fastest way to validate your environment and the reference miner locally:
 ```shell
 git clone https://github.com/synthdataco/synth-subnet.git
 cd synth-subnet
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv, if you don't have it
+uv sync && source .venv/bin/activate
 python synth/miner/run.py   # prints "CORRECT" if the dummy model's output format is valid
 ```
 
@@ -339,9 +339,10 @@ Please refer to this [guide](./docs/validator_guide.md) for more detailed instru
 
 ### 2.3 Develop
 
+`uv sync` installs the dev dependencies by default. Then:
+
 ```shell
-pip install -r requirements-dev.txt
-pre-commit install
+uv run pre-commit install
 ```
 
 <sup>[Back to top ^][table-of-contents]</sup>

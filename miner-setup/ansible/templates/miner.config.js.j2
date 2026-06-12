@@ -1,7 +1,7 @@
 module.exports = {
   apps: [{
     name: "miner",
-    interpreter: "{{ install_dir }}/bt_venv/bin/python3",
+    interpreter: "{{ install_dir }}/.venv/bin/python3",
     script: "./neurons/miner.py",
     args: "--netuid {{ netuid }} --subtensor.network {{ network }} --logging.debug --logging.trace --wallet.name {{ wallet_name }} --wallet.hotkey {{ wallet_hotkey }} --axon.port {{ axon_port }} --blacklist.force_validator_permit true --blacklist.validator_min_stake 1000",
     cwd: "{{ install_dir }}",
