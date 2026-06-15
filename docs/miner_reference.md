@@ -18,7 +18,6 @@
     - [`--neuron.events_retention_size TEXT`](#--neuronevents_retention_size-text)
     - [`--neuron.name TEXT`](#--neuronname-text)
     - [`--neuron.timeout INTEGER`](#--neurontimeout-integer)
-    - [`--neuron.vpermit_tao_limit INTEGER`](#--neuronvpermit_tao_limit-integer)
     - [`--wallet.hotkey TEXT`](#--wallethotkey-text)
     - [`--wallet.name TEXT`](#--walletname-text)
   - [1.2. Weights & Bases Options](#12-weights--bases-options)
@@ -480,39 +479,6 @@ Alternatively, you can add the args directly to the command:
 
 ```shell
 pm2 start miner.config.js -- --neuron.timeout 120
-```
-
-<sup>[Back to top ^][table-of-contents]</sup>
-
-#### `--neuron.vpermit_tao_limit INTEGER`
-
-The maximum number of TAO allowed that is allowed for the validator to process miner response, (e.g. 1000).
-
-Default: `4096`
-
-Example:
-
-```js
-// miner.config.js
-module.exports = {
-  apps: [
-    {
-      name: "miner",
-      interpreter: "python3",
-      script: "./neurons/miner.py",
-      args: "--neuron.vpermit_tao_limit 1000",
-      env: {
-        PYTHONPATH: ".",
-      },
-    },
-  ],
-};
-```
-
-Alternatively, you can add the args directly to the command:
-
-```shell
-pm2 start miner.config.js -- --neuron.vpermit_tao_limit 1000
 ```
 
 <sup>[Back to top ^][table-of-contents]</sup>

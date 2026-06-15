@@ -937,9 +937,9 @@ pm2 start validator.config.js -- --neuron.nprocs 2
 
 #### `--neuron.vpermit_tao_limit INTEGER`
 
-The maximum number of TAO allowed that is allowed for the validator to process validator response, (e.g. 1000).
+The maximum amount of miner stake allowed for the validator to process validator response, (e.g. 999999).
 
-Default: `4096`
+Default: `999999`
 
 Example:
 
@@ -951,7 +951,7 @@ module.exports = {
       name: "validator",
       interpreter: "python3",
       script: "./neurons/validator.py",
-      args: "--neuron.vpermit_tao_limit 1000",
+      args: "--neuron.vpermit_tao_limit 999999",
       env: {
         PYTHONPATH: ".",
       },
@@ -963,7 +963,7 @@ module.exports = {
 Alternatively, you can add the args directly to the command:
 
 ```shell
-pm2 start validator.config.js -- --neuron.vpermit_tao_limit 1000
+pm2 start validator.config.js -- --neuron.vpermit_tao_limit 999999
 ```
 
 <sup>[Back to top ^][table-of-contents]</sup>
