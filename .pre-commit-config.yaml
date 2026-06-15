@@ -8,3 +8,7 @@ repos:
     rev: 7.1.2
     hooks:
       - id: flake8
+        # flake8 doesn't read pyproject.toml on its own; this plugin lets the
+        # hook's isolated env pick up [tool.flake8] (extend-ignore, etc.),
+        # matching `uv run flake8` and CI.
+        additional_dependencies: ["Flake8-pyproject==1.2.3"]

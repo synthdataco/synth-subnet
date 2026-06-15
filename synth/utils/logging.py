@@ -13,6 +13,29 @@ import google.auth.exceptions
 EVENTS_LEVEL_NUM = 38
 DEFAULT_LOG_BACKUP_COUNT = 10
 
+# Third-party loggers that emit high-volume DEBUG/INFO noise. The GCP handler
+# forwards everything at DEBUG (see setup_gcp_logging), so we raise these to
+# WARNING to keep them out of Cloud Logging and local stdout alike.
+NOISY_LOGGERS = (
+    "sqlalchemy.engine",
+    "sqlalchemy.orm.mapper.Mapper",
+    "sqlalchemy.orm.strategies.LazyLoader",
+    "sqlalchemy.orm.relationships.RelationshipProperty",
+    "sqlalchemy.orm.path_registry",
+    "async_substrate_interface",
+    "urllib3.connectionpool",
+)
+
+
+def silence_noisy_loggers():
+    """Raise high-volume third-party loggers (NOISY_LOGGERS) to WARNING.
+
+    Idempotent; call from each entry point that may run without the others
+    (GCP log setup, DB engine creation) so suppression holds in every context.
+    """
+    for noisy_logger in NOISY_LOGGERS:
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
 
 def setup_events_logger(full_path, events_retention_size):
     logging.addLevelName(EVENTS_LEVEL_NUM, "EVENT")
@@ -110,6 +133,7 @@ def setup_gcp_logging(
             labels = {"log_id": log_id}
             if cycle_label is not None:
                 labels["cycle_label"] = cycle_label
+            silence_noisy_loggers()
             client.setup_logging(log_level=logging.DEBUG, labels=labels)
             handler = next(
                 (
