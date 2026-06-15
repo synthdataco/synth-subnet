@@ -212,7 +212,7 @@ def add_validator_args(_, parser: argparse.ArgumentParser):
         "--neuron.vpermit_tao_limit",
         type=int,
         help="The maximum number of TAO allowed to query a validator with a vpermit.",
-        default=4096,
+        default=999999,
     )
 
     parser.add_argument(
@@ -300,14 +300,14 @@ def add_validator_args(_, parser: argparse.ArgumentParser):
         "--cycle_interval_minutes.low",
         type=int,
         help="Cycle interval in minutes for the low frequency prompt.",
-        default=5,
+        default=6,
     )
 
     parser.add_argument(
         "--cycle_interval_minutes.high",
         type=int,
         help="Cycle interval in minutes for the high frequency prompt.",
-        default=2,
+        default=5,
     )
     parser.add_argument(
         "--storage.backend",

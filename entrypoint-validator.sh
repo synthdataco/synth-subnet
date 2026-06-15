@@ -6,13 +6,13 @@ mainnet_netuid=50
 netuid=${NETUID:-$mainnet_netuid}
 
 vpermit_tao_limit=999999
-default_softmax_beta_low=-0.1
+default_softmax_beta_low=-0.4
 softmax_beta_low="${SOFTMAX_BETA_LOW:-$default_softmax_beta_low}"
-default_softmax_beta_high=-0.2
+default_softmax_beta_high=-0.4
 softmax_beta_high="${SOFTMAX_BETA_HIGH:-$default_softmax_beta_high}"
 default_sma_days_low=10
 sma_days_low="${SMA_DAYS_LOW:-$default_sma_days_low}"
-default_sma_days_high=3
+default_sma_days_high=5
 sma_days_high="${SMA_DAYS_HIGH:-$default_sma_days_high}"
 
 default_validator_coldkey_name=validator
