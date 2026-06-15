@@ -1,5 +1,4 @@
 import os
-import logging
 from datetime import datetime
 import urllib
 
@@ -18,6 +17,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship, Session
+
+from synth.utils.logging import silence_noisy_loggers
 
 
 class Base(DeclarativeBase):
@@ -39,7 +40,7 @@ def get_database_url():
 
 
 def create_engine_and_session():
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    silence_noisy_loggers()
     engine = create_engine(get_database_url(), echo=False, pool_pre_ping=True)
     return engine, Session(engine)
 
