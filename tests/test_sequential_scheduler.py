@@ -16,7 +16,6 @@ def _config(cycle_interval_minutes: int) -> PromptConfig:
         label="test",
         time_length=86400,
         time_increment=300,
-        initial_delay=0,
         cycle_interval_minutes=cycle_interval_minutes,
         timeout_extra_seconds=60,
         scoring_intervals={},

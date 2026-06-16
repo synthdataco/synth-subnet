@@ -7,7 +7,6 @@ class PromptConfig:
     label: str
     time_length: int
     time_increment: int
-    initial_delay: int
     cycle_interval_minutes: int
     timeout_extra_seconds: int
     scoring_intervals: dict[str, int]  # Define scoring intervals in seconds.
@@ -42,7 +41,6 @@ LOW_FREQUENCY = PromptConfig(
     label="low",
     time_length=86400,
     time_increment=300,
-    initial_delay=60,  # avoid 2 prompts to start simultaneously
     cycle_interval_minutes=5,
     timeout_extra_seconds=60,
     scoring_intervals={
@@ -60,11 +58,10 @@ LOW_FREQUENCY = PromptConfig(
 )
 
 HIGH_FREQUENCY = PromptConfig(
-    asset_list=["BTC", "ETH", "XAU", "SOL", "HYPE"],
+    asset_list=["BTC", "ETH", "SOL", "XRP", "HYPE"],
     label="high",
     time_length=3600,
     time_increment=60,
-    initial_delay=0,
     cycle_interval_minutes=2,
     timeout_extra_seconds=60,
     scoring_intervals={
