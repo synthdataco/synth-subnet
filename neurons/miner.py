@@ -92,6 +92,13 @@ class Miner(BaseMinerNeuron):
             )
             return True, "Missing dendrite or hotkey"
 
+        if not synapse.dendrite.signature:
+            bt.logging.warning(
+                f"Blacklisting unsigned request claiming hotkey "
+                f"{synapse.dendrite.hotkey}"
+            )
+            return True, "Missing signature"
+
         if (
             not self.config.blacklist.allow_non_registered
             and synapse.dendrite.hotkey not in self.metagraph.hotkeys
