@@ -12,12 +12,8 @@ from tenacity import (
 )
 
 # Hermes Pyth API documentation: https://hermes.pyth.network/docs/
-# Pyth Lazer (the Pro replacement for latest_price) docs:
-# https://docs.pyth.network/price-feeds/pro/api/rest#post-v1latest_price
-# Selected by env: PYTH_BACKEND=pro (default `hermes`). When `pro`, requests
-# go to Lazer with a Bearer PYTH_API_KEY. WTIOIL has no working Lazer feed
-# today so we route it through Hyperliquid (same coin `xyz:CL` the validator
-# uses for WTIOIL history).
+# Pyth Lazer https://docs.pyth.network/price-feeds/pro/api/rest#post-v1latest_price
+# If env: PYTH_API_KEY=<api key> is set, the miner will use Pyth Lazer instead of Hermes for assets with a Lazer feed.
 
 TOKEN_MAP = {
     "BTC": "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
@@ -35,10 +31,7 @@ TOKEN_MAP = {
 }
 
 # Lazer u32 feed IDs sourced from https://pyth.dourolabs.app/v1/symbols by
-# matching each asset's hermes_id. Re-discover with
-# verify/pyth-lazer-listing.py. WTIOIL has no active Lazer feed (the closest
-# replacement USOILSPOT is inactive); it is intentionally absent and routed
-# to Hyperliquid in the `pro` branch instead.
+# matching each asset's hermes_id.
 LAZER_FEED_ID_MAP: dict[str, int] = {
     "BTC": 1,
     "ETH": 2,
@@ -53,11 +46,10 @@ LAZER_FEED_ID_MAP: dict[str, int] = {
     "TSLAX": 1847,
 }
 
-# Hyperliquid `coin` codes for assets that have no usable Pyth feed. Mirrors
-# `PriceDataProvider.HYPERLIQUID_SYMBOL_MAP` on the validator side so the
-# miner's spot price comes from the same source the validator scores against.
+# Hyperliquid `coin` codes for assets that have no usable Pyth feed.
 HYPERLIQUID_ASSET_MAP = {
     "WTIOIL": "xyz:CL",
+    "SPCX": "xyz:SPCX",
 }
 
 # `fixed_rate@200ms` meets every feed's min_channel (crypto majors accept
@@ -88,12 +80,7 @@ def _fetch_price_hermes(asset: str) -> float | None:
     return live_price
 
 
-def _fetch_price_lazer(asset: str) -> float | None:
-    api_key = os.environ.get("PYTH_API_KEY")
-    if not api_key:
-        print("PYTH_API_KEY not set; required when PYTH_BACKEND=pro")
-        return None
-
+def _fetch_price_lazer(asset: str, api_key: str) -> float | None:
     payload = {
         "channel": LAZER_CHANNEL,
         "priceFeedIds": [LAZER_FEED_ID_MAP[asset]],
@@ -155,12 +142,11 @@ def _fetch_price_hyperliquid(asset: str) -> float | None:
     reraise=True,
 )
 def get_asset_price(asset="BTC") -> float | None:
-    backend = os.environ.get("PYTH_BACKEND", "hermes").lower()
-    if backend == "pro":
-        if asset in HYPERLIQUID_ASSET_MAP:
-            return _fetch_price_hyperliquid(asset)
-        if asset in LAZER_FEED_ID_MAP:
-            return _fetch_price_lazer(asset)
+    if asset in HYPERLIQUID_ASSET_MAP:
+        return _fetch_price_hyperliquid(asset)
+    api_key = os.environ.get("PYTH_API_KEY")
+    if asset in LAZER_FEED_ID_MAP and api_key:
+        return _fetch_price_lazer(asset, api_key)
     return _fetch_price_hermes(asset)
 
 

@@ -6,7 +6,7 @@ from sqlalchemy import Engine
 
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.moving_average import compute_smoothed_score
-from synth.validator.prompt_config import LOW_FREQUENCY
+from synth.validator.competition_config import CRYPTO_24H
 
 
 def read_csv(file_name):
@@ -27,7 +27,7 @@ def test_moving_average_1(db_engine: Engine):
         handler,
         input_df=df,
         scored_time=scored_time,
-        prompt_config=LOW_FREQUENCY,
+        comp=CRYPTO_24H,
     )
 
     # The miner id you want to search for
@@ -61,7 +61,7 @@ def test_moving_average_2(db_engine: Engine):
         handler,
         input_df=df,
         scored_time=scored_time,
-        prompt_config=LOW_FREQUENCY,
+        comp=CRYPTO_24H,
     )
 
     # The miner id you want to search for

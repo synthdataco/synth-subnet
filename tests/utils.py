@@ -55,8 +55,7 @@ def prepare_random_predictions(db_engine: Engine, start_time: str):
     )
 
     # generate_simulations() fetches a live current price via get_asset_price
-    # (Pyth Lazer when PYTH_BACKEND=pro). Tests must not depend on that
-    # external call, so pin the price and let the GBM math run on it.
+    # Tests must not depend on that external call, so pin the price and let the GBM math run on it.
     with patch(
         "synth.miner.simulations.get_asset_price", return_value=90000.0
     ):

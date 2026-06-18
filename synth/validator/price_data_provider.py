@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 import requests
 
@@ -17,20 +16,8 @@ from synth.db.models import ValidatorRequest
 from synth.utils.helpers import from_iso_to_unix_time
 from synth.utils.logging import print_execution_time
 
-# Pyth API benchmarks doc: https://benchmarks.pyth.network/docs
-# get the list of stocks supported by pyth: https://benchmarks.pyth.network/v1/shims/tradingview/symbol_info?group=pyth_stock
-# get the list of crypto supported by pyth: https://benchmarks.pyth.network/v1/shims/tradingview/symbol_info?group=pyth_crypto
-# get the ticker: https://benchmarks.pyth.network/v1/shims/tradingview/symbols?symbol=Crypto.XAUT/USD
-#
-# Pyth Pro Router (new) returns the same TradingView shape from
-# https://pyth.dourolabs.app/v1/real_time/history with the same `Crypto.*/USD`
-# symbol strings — public, no auth required. Selected by PYTH_BACKEND=pro.
-
 
 class PriceDataProvider:
-    PYTH_BENCHMARKS_URL = (
-        "https://benchmarks.pyth.network/v1/shims/tradingview/history"
-    )
     # `fixed_rate@200ms` is the channel that meets every feed's min_channel:
     # stocks/metals/oil reject `real_time` with 404, but accept this. Crypto
     # majors accept it too. One channel, every feed.
@@ -64,22 +51,13 @@ class PriceDataProvider:
         "GOOGLX": "Crypto.GOOGLX/USD",
         "XRP": "Crypto.XRP/USD",
         "HYPE": "Crypto.HYPE/USD",
+        "SPCX": "Pyth.HL.SPCX/USDC",
     }
 
     # Assets fetched from Hyperliquid (overrides Pyth for these assets)
     HYPERLIQUID_SYMBOL_MAP = {
         "WTIOIL": "xyz:CL",
     }
-
-    def __init__(self):
-        # Resolve once at instance construction so we honour the .env loaded
-        # by neurons/validator.py before instantiation. PYTH_BACKEND=pro
-        # routes history through the new Pyth Pro Router; default `hermes`
-        # keeps the legacy Benchmarks endpoint for instant rollback.
-        backend = os.environ.get("PYTH_BACKEND", "hermes").lower()
-        self.pyth_history_url = (
-            self.PYTH_PRO_URL if backend == "pro" else self.PYTH_BENCHMARKS_URL
-        )
 
     @staticmethod
     def assert_assets_supported(asset_list: list[str]):
@@ -125,7 +103,7 @@ class PriceDataProvider:
                 "to": last_grid_timestamp + self.CANDLE_INTERVAL_SECONDS,
             }
 
-            response = requests.get(self.pyth_history_url, params=params)
+            response = requests.get(self.PYTH_PRO_URL, params=params)
             response.raise_for_status()
             data = response.json()
 

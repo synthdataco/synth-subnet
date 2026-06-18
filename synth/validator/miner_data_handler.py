@@ -491,7 +491,8 @@ class MinerDataHandler:
         self,
         scored_time: datetime,
         window_days: int,
-        time_length: int | None = None,
+        time_length: int,
+        asset_list: list[str],
     ) -> typing.Optional[list[ValidatorRequest]]:
         """
         Retrieve the list of IDs of the latest validator requests that (start_time + time_length) < scored_time
@@ -499,9 +500,6 @@ class MinerDataHandler:
         This is to ensure that we only get requests that are within the window_days.
         and exclude records that are already scored
         """
-        if time_length is None:
-            time_length = prompt_config.LOW_FREQUENCY.time_length
-
         try:
             with self.engine.connect() as connection:
                 subq = (
@@ -578,6 +576,7 @@ class MinerDataHandler:
                             # Skip thinned-empty requests.
                             exists(alive_subq),
                             ValidatorRequest.time_length == time_length,
+                            ValidatorRequest.asset.in_(asset_list),
                         )
                     )
                     .order_by(ValidatorRequest.start_time.asc())
@@ -658,11 +657,10 @@ class MinerDataHandler:
         self,
         scored_time: datetime,
         window_days: int,
-        time_length: int | None = None,
+        time_length: int,
+        asset_list: list[str],
     ):
         min_scored_time = scored_time - timedelta(days=window_days)
-        if time_length is None:
-            time_length = prompt_config.LOW_FREQUENCY.time_length
 
         try:
             with self.engine.connect() as connection:
@@ -681,6 +679,7 @@ class MinerDataHandler:
                     JOIN validator_requests vr ON vr.id = mp.validator_requests_id
                     WHERE ms.scored_time > :min_scored_time
                       AND vr.time_length = :time_length
+                      AND vr.asset = ANY(:asset_list)
                 """)
 
                 result = connection.execute(
@@ -688,6 +687,7 @@ class MinerDataHandler:
                     {
                         "min_scored_time": min_scored_time,
                         "time_length": time_length,
+                        "asset_list": asset_list,
                     },
                 )
 

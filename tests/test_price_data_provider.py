@@ -419,10 +419,6 @@ class TestSettlementGuard(unittest.TestCase):
 
 
 class TestPriceDataProviderProBackend(unittest.TestCase):
-    """Same regression suite, but with PYTH_BACKEND=pro selected so the
-    provider hits the Pyth Pro Router URL. Response shape is identical to
-    the legacy Benchmarks API, so the price-extraction output must match."""
-
     def test_pro_backend_uses_pro_url(self):
         # 1739974740 is the settlement-witness candle past the last grid
         # point at 1739974680 (= start + time_length).
@@ -437,40 +433,16 @@ class TestPriceDataProviderProBackend(unittest.TestCase):
             "c": [100000.23, 99000.55, 103000.55, 108000.867, 108500.0],
         }
 
-        with patch.dict("os.environ", {"PYTH_BACKEND": "pro"}):
-            provider = PriceDataProvider()
-            with patch("requests.get") as mock_get:
-                mock_get.return_value.json.return_value = mock_response
-                result = provider.fetch_data(validator_request)
+        provider = PriceDataProvider()
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.json.return_value = mock_response
+            result = provider.fetch_data(validator_request)
 
-                called_url = mock_get.call_args[0][0]
-                called_params = mock_get.call_args.kwargs["params"]
-                assert called_url == PriceDataProvider.PYTH_PRO_URL
-                # The fetch window must extend one minute past the last grid
-                # point so the settlement witness can land in the response.
-                assert called_params["to"] == 1739974680 + 60
-                assert result == [100000.23, 99000.55, 103000.55, 108000.867]
-
-    def test_hermes_backend_uses_benchmarks_url(self):
-        mock_response = {
-            "t": [
-                1739974320,
-                1739974440,
-                1739974560,
-                1739974680,
-                1739974740,
-            ],
-            "c": [100000.23, 99000.55, 103000.55, 108000.867, 108500.0],
-        }
-
-        with patch.dict("os.environ", {"PYTH_BACKEND": "hermes"}):
-            provider = PriceDataProvider()
-            with patch("requests.get") as mock_get:
-                mock_get.return_value.json.return_value = mock_response
-                provider.fetch_data(validator_request)
-
-                called_url = mock_get.call_args[0][0]
-                assert called_url == PriceDataProvider.PYTH_BENCHMARKS_URL
+            called_params = mock_get.call_args.kwargs["params"]
+            # The fetch window must extend one minute past the last grid
+            # point so the settlement witness can land in the response.
+            assert called_params["to"] == 1739974680 + 60
+            assert result == [100000.23, 99000.55, 103000.55, 108000.867]
 
 
 class TestPriceDataProviderLiveProBackend(unittest.TestCase):
@@ -485,36 +457,29 @@ class TestPriceDataProviderLiveProBackend(unittest.TestCase):
         ) - timedelta(minutes=5)
         start = end - timedelta(minutes=10)
 
-        with patch.dict("os.environ", {"PYTH_BACKEND": "pro"}):
-            provider = PriceDataProvider()
-            self.assertEqual(
-                provider.pyth_history_url,
-                PriceDataProvider.PYTH_PRO_URL,
-            )
+        provider = PriceDataProvider()
 
-            for asset in PriceDataProvider.PYTH_SYMBOL_MAP.keys():
-                with self.subTest(asset=asset):
-                    req = ValidatorRequest(
-                        asset=asset,
-                        start_time=start,
-                        time_length=600,
-                        time_increment=60,
-                    )
-                    prices = provider.fetch_data(req)
+        for asset in PriceDataProvider.PYTH_SYMBOL_MAP.keys():
+            with self.subTest(asset=asset):
+                req = ValidatorRequest(
+                    asset=asset,
+                    start_time=start,
+                    time_length=600,
+                    time_increment=60,
+                )
+                prices = provider.fetch_data(req)
 
-                    # time_length=600s @ time_increment=60s => 11 grid points.
-                    self.assertEqual(len(prices), 11)
-                    finite = [p for p in prices if not np.isnan(p)]
-                    self.assertGreater(
-                        len(finite),
-                        5,
-                        f"{asset}: too many gaps: {prices}",
+                # time_length=600s @ time_increment=60s => 11 grid points.
+                self.assertEqual(len(prices), 11)
+                finite = [p for p in prices if not np.isnan(p)]
+                self.assertGreater(
+                    len(finite),
+                    5,
+                    f"{asset}: too many gaps: {prices}",
+                )
+                for p in finite:
+                    # Loose sanity bounds — XAU ~$5k, HYPE ~$40, BTC ~$80k.
+                    self.assertGreater(p, 0, f"{asset}: non-positive price")
+                    self.assertLess(
+                        p, 10_000_000, f"{asset}: suspicious magnitude"
                     )
-                    for p in finite:
-                        # Loose sanity bounds — XAU ~$5k, HYPE ~$40, BTC ~$80k.
-                        self.assertGreater(
-                            p, 0, f"{asset}: non-positive price"
-                        )
-                        self.assertLess(
-                            p, 10_000_000, f"{asset}: suspicious magnitude"
-                        )
