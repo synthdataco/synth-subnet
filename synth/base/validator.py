@@ -20,13 +20,18 @@
 
 import copy
 import numpy as np
-import asyncio
 import argparse
 import threading
 import bittensor as bt
+from bittensor.utils import (
+    ExtrinsicResponse,
+    networking as net,
+)
 
 from typing import List, Union
 
+from bittensor.core.extrinsics.serving import serve_extrinsic
+from bittensor.core.settings import DEFAULT_PERIOD
 from synth.base.dendrite import SynthDendrite
 from synth.base.neuron import BaseNeuron
 from synth.base.utils.weight_utils import (
@@ -65,37 +70,39 @@ class BaseValidatorNeuron(BaseNeuron):
         # Init sync with the network. Updates the metagraph.
         self.sync()
 
-        # Serve axon to enable external connections.
-        if not self.config.neuron.axon_off:
-            self.serve_axon()
-        else:
-            bt.logging.warning("axon off, not serving ip to chain.")
-
-        # Create asyncio event loop to manage async tasks.
-        self.loop = asyncio.get_event_loop()
+        self.register_ip()
 
         # Instantiate runners
         self.should_exit = False
         self.is_running = False
         self.thread: Union[threading.Thread, None] = None
 
-    def serve_axon(self):
-        """Serve axon to enable external connections."""
+    def register_ip(self):
+        """Detect egress IP and register it on-chain."""
+        bt.logging.info("publishing ip to chain...")
 
-        bt.logging.info("serving ip to chain...")
         try:
-            self.axon = bt.Axon(wallet=self.wallet, config=self.config)
-
+            # Get external ip
             try:
-                self.subtensor.serve_axon(
-                    netuid=self.config.netuid,
-                    axon=self.axon,
+                external_ip = net.get_external_ip()
+                bt.logging.debug(
+                    f"[green]Found external ip:[/green] [blue]{external_ip}[/blue]"
                 )
-                bt.logging.info(
-                    f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
-                )
-            except Exception as e:
-                bt.logging.error(f"Failed to serve Axon with exception: {e}")
+            except Exception as error:
+                message = f"Unable to attain your external ip. Check your internet connection. Error: {error}"
+
+                return ExtrinsicResponse(False, message).with_log()
+
+            # Subscribe to chain
+            serve_extrinsic(
+                subtensor=self.subtensor,
+                wallet=self.wallet,
+                ip=external_ip,
+                port=8091,  # default axon port because we only care about the IP
+                protocol=4,
+                netuid=self.config.netuid,
+                period=DEFAULT_PERIOD,
+            )
 
         except Exception as e:
             bt.logging.error(
@@ -127,8 +134,6 @@ class BaseValidatorNeuron(BaseNeuron):
             self.forward_validator()
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
-            if not self.config.neuron.axon_off:
-                self.axon.stop()
             bt.logging.success("Validator killed by keyboard interrupt.")
             exit()
 
