@@ -22,6 +22,7 @@ NOISY_LOGGERS = (
     "sqlalchemy.orm.strategies.LazyLoader",
     "sqlalchemy.orm.relationships.RelationshipProperty",
     "sqlalchemy.orm.path_registry",
+    "sqlalchemy.pool.impl.QueuePool",
     "async_substrate_interface",
     "urllib3.connectionpool",
 )

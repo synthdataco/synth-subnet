@@ -5,12 +5,6 @@ import pytest
 from sqlalchemy import create_engine
 from testcontainers.postgres import PostgresContainer
 
-# The scoring tests fetch real prices live from Pyth. Default to the Pro
-# router (public, no API key) like CI does — the legacy hermes/benchmarks
-# endpoint rate-limits (429) under the suite's call volume. `setdefault`
-# leaves an explicit `PYTH_BACKEND=hermes` override untouched.
-os.environ.setdefault("PYTH_BACKEND", "pro")
-
 postgres = PostgresContainer("postgres:16-alpine")
 
 

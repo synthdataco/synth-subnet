@@ -11,8 +11,6 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    env:
-      PYTH_BACKEND: pro
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

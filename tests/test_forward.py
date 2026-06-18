@@ -79,7 +79,7 @@ def test_calculate_moving_average_and_update_rewards(db_engine: Engine):
     print("moving_averages_data", moving_averages_data)
 
 
-# Pin the miner's live-price fetch (Pyth Lazer on PYTH_BACKEND=pro) so these
+# Pin the miner's live-price fetch so these
 # tests don't depend on it. PriceDataProvider's history fetch stays live — it
 # hits the public Pyth Pro history endpoint and is part of what's scored.
 @patch("synth.miner.simulations.get_asset_price", return_value=90000.0)

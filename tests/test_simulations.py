@@ -6,7 +6,7 @@ from synth.utils.helpers import get_current_time, round_time_to_minutes
 from synth.validator.response_validation_v2 import CORRECT, validate_responses
 
 
-# get_asset_price hits a live price feed (Pyth Lazer on PYTH_BACKEND=pro);
+# get_asset_price hits a live price feed;
 # pin it so these tests exercise the simulation math without a network call.
 @patch("synth.miner.simulations.get_asset_price", return_value=90000.0)
 def test_generate_simulations(mock_get_asset_price):

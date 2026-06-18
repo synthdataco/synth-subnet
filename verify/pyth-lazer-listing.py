@@ -54,6 +54,15 @@ HERMES_ID_MAP = {
     "WTIOIL": "925ca92ff005ae943c158e3563f59698ce7e75c5a8c8dd43303a0a154887b3e6",
 }
 
+# Assets with no hermes_id in the Lazer catalog — Pyth-Pro / Lazer-only feeds.
+# SPCX is `Pyth.HL.SPCX/USDC` (pyth_lazer_id=99934, exponent=-4): the legacy
+# hermes/Benchmarks endpoint returns "Symbol ... doesn't exist" for it, so the
+# validator can only score SPCX with PYTH_BACKEND=pro. The hermes_id bridge
+# can't resolve these, so we match them by symbol string instead.
+LAZER_SYMBOL_MAP = {
+    "SPCX": "Pyth.HL.SPCX/USDC",
+}
+
 
 def lazer_auth_headers() -> dict:
     key = os.environ.get("PYTH_API_KEY")
@@ -96,10 +105,15 @@ def map_assets_to_lazer(symbols: list) -> dict:
         if hermes_id:
             by_hermes[hermes_id] = entry
 
+    by_symbol = {entry.get("symbol"): entry for entry in symbols}
+
     mapping = {}
     for asset, hermes_id in HERMES_ID_MAP.items():
         match = by_hermes.get(normalize_hex(hermes_id))
         mapping[asset] = match
+    # Lazer-only feeds have no hermes_id; resolve them by symbol instead.
+    for asset, symbol in LAZER_SYMBOL_MAP.items():
+        mapping[asset] = by_symbol.get(symbol)
     return mapping
 
 
