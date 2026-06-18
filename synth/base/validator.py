@@ -87,10 +87,11 @@ class BaseValidatorNeuron(BaseNeuron):
                     f"[green]Found external ip:[/green] [blue]{external_ip}[/blue]"
                 )
             except Exception as error:
-                message = f"Unable to attain your external ip. Check your internet connection. Error: {error}"
-
-                return ExtrinsicResponse(False, message).with_log()
-
+                bt.logging.error(
+                    "Unable to obtain external IP; check your internet connection. "
+                    f"Error: {error}"
+                )
+                return
             # Subscribe to chain
             serve_extrinsic(
                 subtensor=self.subtensor,
