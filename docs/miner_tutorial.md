@@ -408,6 +408,22 @@ Your miner should only answer requests from a validator that:
 - Publishes its IP on chain.
 - Holds the validator permit.
 
+Maintaining this allow-list by hand is tedious, since validator IPs may change over time. We provide a chain-sync script that keeps your `ufw` allow-list in sync with the eligible validators on the metagraph automatically:
+
+[synth/miner/chain_sync.py](https://github.com/synthdataco/synth-subnet/blob/main/synth/miner/chain_sync.py)
+
+It admits only validators that hold the validator permit and stake at least `--blacklist.validator_min_stake` (default `65000`), then adds/removes per-IP rules on each cycle. Use `--dry-run` to preview which IPs would be allowed without touching `ufw`:
+
+```shell
+python synth/miner/chain_sync.py --axon_port 8091 --dry-run
+```
+
+To run it for real (as root, so it can edit `ufw`):
+
+```shell
+python synth/miner/chain_sync.py --axon_port 8091
+```
+
 <sup>[Back to top ^][table-of-contents]</sup>
 
 ### 4.2. Update and run the blacklist function
