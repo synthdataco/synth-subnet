@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "synth-subnet"
 version = "1.0.0"
@@ -43,6 +47,12 @@ dev = [
     "types-requests==2.32.0.20250328",
     "Flake8-pyproject==1.2.3",
 ]
+
+# Flat layout with several top-level dirs (verify/, research/, alembic/, …):
+# tell setuptools to ship only the importable runtime packages, so downstream
+# consumers can build a wheel (auto-discovery refuses to guess otherwise).
+[tool.setuptools.packages.find]
+include = ["synth*", "neurons*"]
 
 [tool.black]
 line-length = 79
