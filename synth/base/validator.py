@@ -24,8 +24,6 @@ import argparse
 import threading
 import bittensor as bt
 from bittensor.utils import networking as net
-from bittensor.core.types import ExtrinsicResponse
-
 from typing import List, Union
 
 from bittensor.core.extrinsics.serving import serve_extrinsic
