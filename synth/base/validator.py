@@ -23,10 +23,8 @@ import numpy as np
 import argparse
 import threading
 import bittensor as bt
-from bittensor.utils import (
-    ExtrinsicResponse,
-    networking as net,
-)
+from bittensor.utils import networking as net
+from bittensor.core.types import ExtrinsicResponse
 
 from typing import List, Union
 
