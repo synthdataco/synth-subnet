@@ -109,9 +109,9 @@ class Miner(BaseMinerNeuron):
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         if not self.metagraph.axons[uid].is_serving:
             bt.logging.info(
-                f"Denying hotkey {synapse.dendrite.hotkey}: no registered axon on-chain"
+                f"Denying hotkey {synapse.dendrite.hotkey}: no published IP on-chain"
             )
-            return True, "No registered axon"
+            return True, "No published IP on-chain"
 
         stake = self.metagraph.S[uid]
         bt.logging.info(f"Requesting UID: {uid} | Stake at UID: {stake}")

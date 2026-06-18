@@ -64,9 +64,9 @@ pm2 start miner.config.js -- --axon.port 8091
 
 #### `--blacklist.validator_min_stake INTEGER`
 
-Minimum validator stake to accept forward requests from as a miner, (e.g. 1000).
+Minimum validator stake to accept forward requests from as a miner, (e.g. 65000).
 
-Default: `1000`
+Default: `65000`
 
 Example:
 
@@ -78,7 +78,7 @@ module.exports = {
       name: "miner",
       interpreter: "python3",
       script: "./neurons/miner.py",
-      args: "--blacklist.validator_min_stake 1000",
+      args: "--blacklist.validator_min_stake 65000",
       env: {
         PYTHONPATH: ".",
       },
@@ -90,7 +90,7 @@ module.exports = {
 Alternatively, you can add the args directly to the command:
 
 ```shell
-pm2 start miner.config.js -- --blacklist.validator_min_stake 1000
+pm2 start miner.config.js -- --blacklist.validator_min_stake 65000
 ```
 
 <sup>[Back to top ^][table-of-contents]</sup>
@@ -686,7 +686,7 @@ Each prompt contains a start_time, which acts as the deadline for your response.
 
 #### 11. Is Synth running on a testnet too?
 
-Yes. The testnet UID is 247, and it functions identically to mainnet mostly but can have feature previews and other experimental features. 
+Yes. The testnet UID is 247, and it functions identically to mainnet mostly but can have feature previews and other experimental features.
 
 We highly recommend running a testnet miner to test your model before deploying to mainnet.
 
