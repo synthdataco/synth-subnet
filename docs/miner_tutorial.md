@@ -430,8 +430,7 @@ python synth/miner/chain_sync.py --axon_port 8091
 
 We ask all miners to run their miners with the blacklist function:
 
-[neurons/miner.py#L58](https://github.com/synthdataco/synth-subnet/blob/fb7148d0cc9f443ab7c8996b2fbe41336a4a669a/neurons/miner.py#L58)
-
+[neurons/miner.py#L58](../neurons/miner.py#L58)
 In particular, it includes a security fix that rejects unsigned requests:
 
 ```python
