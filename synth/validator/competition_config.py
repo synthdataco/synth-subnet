@@ -93,3 +93,13 @@ CRYPTO_1H = CompetitionConfig(
     window_days=5,
     softmax_beta=-0.3,
 )
+
+
+# Canonical list of competitions. Both the scoring cycle (neurons/validator.py)
+# and the moving-average update (forward.py) iterate this, so a competition
+# added/renamed/reordered here propagates to both — don't re-list elsewhere.
+ALL_COMPETITIONS = [
+    COM_EQU_24H,
+    CRYPTO_24H,
+    CRYPTO_1H,
+]

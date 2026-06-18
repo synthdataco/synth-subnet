@@ -92,14 +92,8 @@ def calculate_moving_average_and_update_rewards(
     miner_data_handler: MinerDataHandler,
     scored_time: datetime,
 ) -> list[dict]:
-    competitions = [
-        competition_config.COM_EQU_24H,
-        competition_config.CRYPTO_24H,
-        competition_config.CRYPTO_1H,
-    ]
-
     moving_averages_data: dict[str, list[dict]] = {}
-    for comp in competitions:
+    for comp in competition_config.ALL_COMPETITIONS:
         miner_scores_df = miner_data_handler.get_miner_scores(
             scored_time,
             comp.window_days,

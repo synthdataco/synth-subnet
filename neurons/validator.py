@@ -243,17 +243,11 @@ class Validator(BaseValidatorNeuron):
         # with predictions and calculate the rewards,
         # we store the rewards in the miner_scores table
         # ========================================== #
-        competitions = [
-            competition_config.COM_EQU_24H,
-            competition_config.CRYPTO_24H,
-            competition_config.CRYPTO_1H,
-        ]
-
         current_time = get_current_time()
         scored_time: datetime = round_time_to_minutes(current_time)
 
         success_count = 0
-        for comp in competitions:
+        for comp in competition_config.ALL_COMPETITIONS:
             bt.logging.info(f"forward score {comp.label}", "forward_score")
 
             if calculate_scores(
