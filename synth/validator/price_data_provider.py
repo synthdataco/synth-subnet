@@ -64,6 +64,7 @@ class PriceDataProvider:
         "GOOGLX": "Crypto.GOOGLX/USD",
         "XRP": "Crypto.XRP/USD",
         "HYPE": "Crypto.HYPE/USD",
+        "SPCX": "Pyth.HL.SPCX/USDC",
     }
 
     # Assets fetched from Hyperliquid (overrides Pyth for these assets)
