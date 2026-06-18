@@ -46,11 +46,13 @@ terraform apply
 The VM will be created in seconds, but the startup script runs in the background and takes ~5 minutes to install all dependencies.
 
 **GCP** — monitor with:
+
 ```bash
 ssh <user>@<miner_ip> "sudo journalctl -u google-startup-scripts.service -f"
 ```
 
 **AWS** — monitor with:
+
 ```bash
 ssh ubuntu@<miner_ip> "sudo tail -f /var/log/cloud-init-output.log"
 ```
@@ -104,6 +106,6 @@ Then SSH into the VM and follow the printed instructions.
 2. **Fund wallet** with >= 0.25 TAO
 3. **Register**: `btcli subnet register --wallet.name miner --wallet.hotkey default --netuid 50`
 4. **Start miner**: `pm2 start miner.config.js` (or `docker compose up -d` for Docker)
-5. **Verify**: `pm2 logs miner` / check https://miners.synthdata.co/
+5. **Verify**: `pm2 logs miner` / check https://synthdata.co/miners/performance
 
 First scores appear ~25 hours after first prediction.

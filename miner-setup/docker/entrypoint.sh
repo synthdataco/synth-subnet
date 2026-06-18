@@ -6,7 +6,7 @@ WALLET_HOTKEY="${WALLET_HOTKEY:-default}"
 NETWORK="${NETWORK:-finney}"
 NETUID="${NETUID:-50}"
 AXON_PORT="${AXON_PORT:-8091}"
-VALIDATOR_MIN_STAKE="${VALIDATOR_MIN_STAKE:-1000}"
+VALIDATOR_MIN_STAKE="${VALIDATOR_MIN_STAKE:-65000}"
 
 echo "Starting synth-subnet miner"
 echo "  Wallet:  $WALLET_NAME / $WALLET_HOTKEY"
@@ -19,6 +19,5 @@ python neurons/miner.py \
     --subtensor.network "$NETWORK" \
     --netuid "$NETUID" \
     --axon.port "$AXON_PORT" \
-    --blacklist.force_validator_permit true \
     --blacklist.validator_min_stake "$VALIDATOR_MIN_STAKE" \
     --logging.debug

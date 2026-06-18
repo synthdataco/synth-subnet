@@ -30,6 +30,10 @@
   - [3.5. Run the miner](#35-run-the-miner)
     - [3.5.1. Start the miner](#351-start-the-miner)
     - [3.5.2. Check the miner is running (optional)](#352-check-the-miner-is-running-optional)
+- [4. Protect your predictions](#4-protect-your-predictions)
+  - [4.1. Restrict ingress to validator IPs](#41-restrict-ingress-to-validator-ips)
+  - [4.2. Update and run the blacklist function](#42-update-and-run-the-blacklist-function)
+  - [4.3. Blacklist parameters](#43-blacklist-parameters)
 
 ### 1. Requirements
 
@@ -89,8 +93,8 @@ pm2 start miner.local.config.js
 ### 2.7. Track your miner performance
 
 - View miner performance and stats on:
-  - [Taostats (Subnet 50)](https://taostats.io/subnets/50/chart)
-  - [Synth Miner Dashboard](https://miners.synthdata.co/)
+  - [Taostats (Subnet 50)](https://taostats.io/subnets/50/metagraph)
+  - [Synth Miner Dashboard](https://synthdata.co/miners/performance/)
 
 ### 2.8. Check your prediction validation
 
@@ -283,6 +287,7 @@ Activate and switch to the newly created Python virtual environment:
 
 ```shell
 source .venv/bin/activate
+export PYTHONPATH=.
 ```
 
 > ⚠️ **NOTE**: This should activate the `.venv` environment, and you will see the command line prefixed with `(.venv)`.
@@ -383,6 +388,67 @@ You can check if the miner is running by using:
 pm2 list
 ```
 
+<sup>[Back to top ^][table-of-contents]</sup>
+
+## 4. Protect your predictions
+
+Your predictions are valuable. To stop unauthorized parties from querying your miner and copying your responses, make sure only legitimate validators can reach your miner port.
+
+### 4.1. Restrict ingress to validator IPs
+
+We **RECOMMEND** configuring your firewall with an allow-list for the ingress IPs on your miner port (`8091`).
+
+Legitimate validators publish their IP on the Bittensor chain, and these IPs are visible on the metagraph:
+
+[https://taostats.io/subnets/50/metagraph?order=validator_trust%3Adesc](https://taostats.io/subnets/50/metagraph?order=validator_trust%3Adesc)
+
+Your miner should only answer requests from a validator that:
+
+- Stakes at least **65000**.
+- Publishes its IP on chain.
+- Holds the validator permit.
+
+Maintaining this allow-list by hand is tedious, since validator IPs may change over time. We provide a chain-sync script that keeps your `ufw` allow-list in sync with the eligible validators on the metagraph automatically:
+
+[synth/miner/chain_sync.py](https://github.com/synthdataco/synth-subnet/blob/main/synth/miner/chain_sync.py)
+
+It admits only validators that hold the validator permit and stake at least `--blacklist.validator_min_stake` (default `65000`), then adds/removes per-IP rules on each cycle. Use `--dry-run` to preview which IPs would be allowed without touching `ufw`:
+
+```shell
+python synth/miner/chain_sync.py --axon_port 8091 --dry-run
+```
+
+To run it for real (as root, so it can edit `ufw`):
+
+```shell
+python synth/miner/chain_sync.py --axon_port 8091
+```
+
+<sup>[Back to top ^][table-of-contents]</sup>
+
+### 4.2. Update and run the blacklist function
+
+We ask all miners to run their miners with the blacklist function:
+
+[neurons/miner.py#L58](../neurons/miner.py#L58)
+In particular, it includes a security fix that rejects unsigned requests:
+
+```python
+if not synapse.dendrite.signature:
+    bt.logging.warning(
+        f"Blacklisting unsigned request claiming hotkey "
+        f"{synapse.dendrite.hotkey}"
+    )
+    return True, "Missing signature"
+```
+
+The new blacklist function applies a minimum of **65000** stake by default. This is why you **MUST** update your blacklist function and restart all your miners.
+
+<sup>[Back to top ^][table-of-contents]</sup>
+
+### 4.3. Blacklist parameters
+
+- `--blacklist.validator_min_stake 65000` — gates requests by validator stake. The blacklist enforces a minimum of `65000`, even if you configure a lower value.
 <sup>[Back to top ^][table-of-contents]</sup>
 
 <!-- links -->

@@ -5,8 +5,6 @@
 - [1. Options](#1-options)
   - [1.1. Common Options](#11-common-options)
     - [`--axon.port INTEGER`](#--axonport-integer)
-    - [`--blacklist.allow_non_registered BOOLEAN`](#--blacklistallow_non_registered-boolean)
-    - [`--blacklist.force_validator_permit BOOLEAN`](#--blacklistforce_validator_permit-boolean)
     - [`--blacklist.validator_min_stake INTEGER`](#--blacklistvalidator_min_stake-integer)
     - [`--logging.debug`](#--loggingdebug)
     - [`--logging.info`](#--logginginfo)
@@ -64,79 +62,11 @@ pm2 start miner.config.js -- --axon.port 8091
 
 <sup>[Back to top ^][table-of-contents]</sup>
 
-#### `--blacklist.allow_non_registered BOOLEAN`
-
-If set, miners will accept queries from non-registered entities.
-
-> 🚨 **WARNING:** Make sure you know what you are doing when setting this option.
-
-Default: `false`
-
-Example:
-
-```js
-// miner.config.js
-module.exports = {
-  apps: [
-    {
-      name: "miner",
-      interpreter: "python3",
-      script: "./neurons/miner.py",
-      args: "--blacklist.allow_non_registered true",
-      env: {
-        PYTHONPATH: ".",
-      },
-    },
-  ],
-};
-```
-
-Alternatively, you can add the args directly to the command:
-
-```shell
-pm2 start miner.config.js -- --blacklist.allow_non_registered true
-```
-
-<sup>[Back to top ^][table-of-contents]</sup>
-
-#### `--blacklist.force_validator_permit BOOLEAN`
-
-If set, we will force incoming requests to have a permit.
-
-Default: `false`
-
-Example:
-
-```js
-// miner.config.js
-module.exports = {
-  apps: [
-    {
-      name: "miner",
-      interpreter: "python3",
-      script: "./neurons/miner.py",
-      args: "--blacklist.force_validator_permit true",
-      env: {
-        PYTHONPATH: ".",
-      },
-    },
-  ],
-};
-```
-
-Alternatively, you can add the args directly to the command:
-
-```shell
-pm2 start miner.config.js -- --blacklist.force_validator_permit true
-```
-
-<sup>[Back to top ^][table-of-contents]</sup>
-
 #### `--blacklist.validator_min_stake INTEGER`
 
-Minimum validator stake to accept forward requests from as a miner, (e.g. 1000).
+Minimum validator stake to accept forward requests from as a miner, (e.g. 65000).
 
-Default: `1000`
+Default: `65000`
 
 Example:
 
@@ -148,7 +78,7 @@ module.exports = {
       name: "miner",
       interpreter: "python3",
       script: "./neurons/miner.py",
-      args: "--blacklist.validator_min_stake 1000",
+      args: "--blacklist.validator_min_stake 65000",
       env: {
         PYTHONPATH: ".",
       },
@@ -160,7 +90,7 @@ module.exports = {
 Alternatively, you can add the args directly to the command:
 
 ```shell
-pm2 start miner.config.js -- --blacklist.validator_min_stake 1000
+pm2 start miner.config.js -- --blacklist.validator_min_stake 65000
 ```
 
 <sup>[Back to top ^][table-of-contents]</sup>
@@ -652,7 +582,7 @@ pm2 start miner.config.js -- --wandb.project_name template-miners
 
 #### 1. What is the best way for me to track my miner’s performance?
 
-Visit the Synth Miner Dashboard: [https://miners.synthdata.co](https://miners.synthdata.co).
+Visit the Synth Miner Dashboard: [https://synthdata.co/miners/performance](https://synthdata.co/miners/performance).
 
 #### 2. How long do I have to wait for my new miner to get the first CRPS score?
 
@@ -664,7 +594,7 @@ It means your submission has the wrong number of time points. You should be subm
 
 #### 4. Why does my miner keep getting a CRPS score of -1?
 
-Your miner will receive a CRPS score of -1 if the prediction is not in the correct format.
+Your miner will receive a CRPS score of -1 if the prediction is not in the correct format or if the submission is late.
 
 #### 5. What is the correct format for subnet-prompted predictions?
 
@@ -730,21 +660,17 @@ CORRECT
 
 Each asset has its own prompts and is scored separately: for every asset/prompt pair, the validator computes a CRPS-based `prompt_score_v3` over time. These per-asset scores are then combined into a single smoothed score using a time-based moving average with asset-specific coefficients (weights). Assets with higher coefficients contribute more to the final smoothed score than lower-weighted assets.
 
-#### 7. I am getting fair CRPS scores but my reward weight is still zero. Why?
-
-Miner reward weights are determined by a softmax function over a smoothed average of your CRPS scores over the past 10 days, using a 5-day half-life. This is subject to future change.
-
-#### 8. How do I improve my miner performance?
+#### 7. How do I improve my miner performance?
 
 Synth regularly publishes detailed miner performance reviews highlighting the strategies of top-performing miners. These reviews can help you optimize your own models.
 
-Explore them here: [https://mirror.xyz/synthdata.eth](https://mirror.xyz/synthdata.eth)
+Explore them here: [https://synthdata.co/research](https://synthdata.co/research)
 
-#### 9. Do I need to run multiple miners?
+#### 8. Do I need to run multiple miners?
 
 If you're using the same model per asset, no — rewards will be the same. If you're using different models, then yes, it's encouraged to experiment and find what works best.
 
-#### 10. Is there a penalty for turning off my miner for a period of time?
+#### 9. Is there a penalty for turning off my miner for a period of time?
 
 If you miss a prompt or submit in an incorrect format, your prompt score will be penalized—set to the 90th percentile of all prompt scores, and your CRPS will be -1.
 
@@ -754,21 +680,17 @@ The smoothed score is calculated as the moving average of your prompt scores ove
 
 These rules apply across all assets.
 
-#### 11. Could someone explain how trust values are calculated?
+#### 10. How much time do miners have to respond to a prompt?
 
-Trust is computed based on the subnet's scoring system, outlined here: [https://docs.bittensor.com/emissions#trust](https://docs.bittensor.com/emissions#trust)
+Each prompt contains a start_time, which acts as the deadline for your response. You’ll always have at least 1 minute from when the prompt is sent. We recommend submitting your response within 20 seconds.
 
-It aggregates individual miner scores into a consensus-based weighting system, which determines reward distribution based on prediction quality.
+#### 11. Is Synth running on a testnet too?
 
-#### 12. How much time do miners have to respond to a prompt?
+Yes. The testnet UID is 247, and it functions identically to mainnet mostly but can have feature previews and other experimental features.
 
-Each prompt contains a start_time, which acts as the deadline for your response. You’ll always have at least 2 minutes from when the prompt is sent. We recommend submitting your response within 40 seconds.
+We highly recommend running a testnet miner to test your model before deploying to mainnet.
 
-#### 13. Is Synth running on a testnet too?
-
-Yes. The testnet UID is 247, and it functions identically to mainnet.
-
-#### 14. Once I start a miner using the guide on GitHub, where do I change the code to run my own model?
+#### 12. Once I start a miner using the guide on GitHub, where do I change the code to run my own model?
 
 Modify this function:
 

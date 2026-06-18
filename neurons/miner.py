@@ -99,10 +99,7 @@ class Miner(BaseMinerNeuron):
             )
             return True, "Missing signature"
 
-        if (
-            not self.config.blacklist.allow_non_registered
-            and synapse.dendrite.hotkey not in self.metagraph.hotkeys
-        ):
+        if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
             # Ignore requests from un-registered entities.
             bt.logging.trace(
                 f"Blacklisting un-registered hotkey {synapse.dendrite.hotkey}"
@@ -110,22 +107,30 @@ class Miner(BaseMinerNeuron):
             return True, "Unrecognized hotkey"
 
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+        if not self.metagraph.axons[uid].is_serving:
+            bt.logging.info(
+                f"Denying hotkey {synapse.dendrite.hotkey}: no published IP on-chain"
+            )
+            return True, "No published IP on-chain"
+
         stake = self.metagraph.S[uid]
         bt.logging.info(f"Requesting UID: {uid} | Stake at UID: {stake}")
-        if stake <= self.config.blacklist.validator_min_stake:
+        validator_min_stake = max(
+            65000, self.config.blacklist.validator_min_stake
+        )
+        if stake <= validator_min_stake:
             # Ignore requests if the stake is below minimum
             bt.logging.info(
-                f"Hotkey: {synapse.dendrite.hotkey}: stake below minimum threshold of {self.config.blacklist.validator_min_stake}"
+                f"Hotkey: {synapse.dendrite.hotkey}: stake below minimum threshold of {validator_min_stake}"
             )
             return True, "Stake below minimum threshold"
 
-        if self.config.blacklist.force_validator_permit:
-            # If the config is set to force validator permit, then we should only allow requests from validators.
-            if not self.metagraph.validator_permit[uid]:
-                bt.logging.warning(
-                    f"Blacklisting a request from non-validator hotkey {synapse.dendrite.hotkey}"
-                )
-                return True, "Non-validator hotkey"
+        # Only allow requests from validators.
+        if not self.metagraph.validator_permit[uid]:
+            bt.logging.warning(
+                f"Blacklisting a request from non-validator hotkey {synapse.dendrite.hotkey}"
+            )
+            return True, "Non-validator hotkey"
 
         bt.logging.trace(
             f"Not Blacklisting recognized hotkey {synapse.dendrite.hotkey}"
