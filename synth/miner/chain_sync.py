@@ -41,7 +41,7 @@ class UfwDiff:
 
 
 def compute_desired_allowlist(metagraph, min_stake: int) -> Set[str]:
-    """Mirrors the miner blacklist predicate at neurons/miner.py:108-117."""
+    """Mirrors the miner blacklist predicate in neurons/miner.py (permit + min stake + published IP)."""
     desired: Set[str] = set()
     for uid in range(int(metagraph.n)):
         if not bool(metagraph.validator_permit[uid]):
