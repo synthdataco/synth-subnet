@@ -448,9 +448,7 @@ The new blacklist function applies a minimum of **65000** stake by default. This
 
 ### 4.3. Blacklist parameters
 
-- `--blacklist.validator_min_stake 65000` — gates requests by validator stake. The new blacklist function applies a minimum of `65000` by default.
-- `--blacklist.force_validator_permit true` — **deprecated**; it now defaults to `true`.
-
+- `--blacklist.validator_min_stake 65000` — gates requests by validator stake. The blacklist enforces a minimum of `65000`, even if you configure a lower value.
 <sup>[Back to top ^][table-of-contents]</sup>
 
 <!-- links -->
