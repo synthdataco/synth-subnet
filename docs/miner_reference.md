@@ -682,7 +682,7 @@ These rules apply across all assets.
 
 #### 10. How much time do miners have to respond to a prompt?
 
-Each prompt contains a start_time, which acts as the deadline for your response. You’ll always have at least 1 minutes from when the prompt is sent. We recommend submitting your response within 20 seconds.
+Each prompt contains a start_time, which acts as the deadline for your response. You’ll always have at least 1 minute from when the prompt is sent. We recommend submitting your response within 20 seconds.
 
 #### 11. Is Synth running on a testnet too?
 
