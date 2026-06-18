@@ -23,7 +23,11 @@ from synth.validator.moving_average import (
     compute_smoothed_score,
     prepare_df_for_moving_average,
 )
-from synth.validator.prompt_config import LOW_FREQUENCY, HIGH_FREQUENCY
+from synth.validator.competition_config import (
+    CRYPTO_1H,
+    CRYPTO_24H,
+    SMOOTHED_SCORE_COEFFICIENT,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -344,9 +348,7 @@ class TestComputeSmoothedScore:
         handler = _mock_handler({1: 10})
         scored_time = _ts(120)
 
-        result = compute_smoothed_score(
-            handler, df, scored_time, LOW_FREQUENCY
-        )
+        result = compute_smoothed_score(handler, df, scored_time, CRYPTO_24H)
 
         assert result is not None
         assert len(result) == 1
@@ -354,7 +356,7 @@ class TestComputeSmoothedScore:
         assert result[0]["miner_uid"] == 10
         assert "smoothed_score" in result[0]
         assert "reward_weight" in result[0]
-        assert result[0]["prompt_name"] == "low"
+        assert result[0]["prompt_name"] == "Crypto 24h"
 
     def test_multiple_miners_rewards_sum_to_coefficient(self):
         """Reward weights across all miners should sum to smoothed_score_coefficient."""
@@ -365,14 +367,12 @@ class TestComputeSmoothedScore:
         handler = _mock_handler({1: 10, 2: 11, 3: 12})
         scored_time = _ts(120)
 
-        result = compute_smoothed_score(
-            handler, df, scored_time, LOW_FREQUENCY
-        )
+        result = compute_smoothed_score(handler, df, scored_time, CRYPTO_24H)
 
         assert result is not None
         total_weight = sum(r["reward_weight"] for r in result)
         assert total_weight == pytest.approx(
-            LOW_FREQUENCY.smoothed_score_coefficient, abs=1e-6
+            SMOOTHED_SCORE_COEFFICIENT, abs=1e-6
         )
 
     def test_empty_df_returns_none(self):
@@ -381,7 +381,7 @@ class TestComputeSmoothedScore:
             columns=["scored_time", "miner_id", "prompt_score_v3", "asset"]
         )
         handler = _mock_handler({})
-        result = compute_smoothed_score(handler, df, _ts(0), LOW_FREQUENCY)
+        result = compute_smoothed_score(handler, df, _ts(0), CRYPTO_24H)
         assert result is None
 
     def test_scored_time_filters_future(self):
@@ -420,11 +420,11 @@ class TestComputeSmoothedScore:
 
         # scored_time before the last entry — includes only t=0 and t=60
         result_partial = compute_smoothed_score(
-            handler, prepared, _ts(60), LOW_FREQUENCY
+            handler, prepared, _ts(60), CRYPTO_24H
         )
         # scored_time includes all three
         result_full = compute_smoothed_score(
-            handler, prepared, _ts(120), LOW_FREQUENCY
+            handler, prepared, _ts(120), CRYPTO_24H
         )
 
         assert result_partial is not None and result_full is not None
@@ -442,23 +442,23 @@ class TestComputeSmoothedScore:
 
         handler = _mock_handler({1: 10, 2: None})  # miner 2 has no uid
 
-        result = compute_smoothed_score(handler, df, _ts(60), LOW_FREQUENCY)
+        result = compute_smoothed_score(handler, df, _ts(60), CRYPTO_24H)
 
         assert result is not None
         miner_ids = [r["miner_id"] for r in result]
         assert 2 not in miner_ids
 
     def test_high_frequency_config(self):
-        """Should work with HIGH_FREQUENCY config and set correct prompt_name."""
+        """Should work with CRYPTO_1H config and set correct prompt_name."""
         times = [_ts(0), _ts(10)]
         df = _make_scores_df([1], times, assets=["BTC", "BTC"], scores=[0.005])
         df = prepare_df_for_moving_average(df)
 
         handler = _mock_handler({1: 10})
-        result = compute_smoothed_score(handler, df, _ts(60), HIGH_FREQUENCY)
+        result = compute_smoothed_score(handler, df, _ts(60), CRYPTO_1H)
 
         assert result is not None
-        assert result[0]["prompt_name"] == "high"
+        assert result[0]["prompt_name"] == "Crypto 1h"
 
     def test_better_miner_gets_more_weight(self):
         """Miner with lower scores (better) should get higher reward weight."""
@@ -490,7 +490,7 @@ class TestComputeSmoothedScore:
         df = prepare_df_for_moving_average(df)
 
         handler = _mock_handler({1: 10, 2: 11})
-        result = compute_smoothed_score(handler, df, _ts(120), LOW_FREQUENCY)
+        result = compute_smoothed_score(handler, df, _ts(120), CRYPTO_24H)
 
         assert result is not None
         rewards = {r["miner_id"]: r["reward_weight"] for r in result}
@@ -505,9 +505,7 @@ class TestComputeSmoothedScore:
 
         handler = _mock_handler({1: 10})
         scored_time = _ts(60)
-        result = compute_smoothed_score(
-            handler, df, scored_time, LOW_FREQUENCY
-        )
+        result = compute_smoothed_score(handler, df, scored_time, CRYPTO_24H)
 
         assert result is not None
         assert result[0]["updated_at"] == scored_time.isoformat()
@@ -526,7 +524,7 @@ class TestComputeSmoothedScore:
         df["scored_time"] = pd.to_datetime(df["scored_time"], utc=True)
 
         handler = _mock_handler({1: 10})
-        result = compute_smoothed_score(handler, df, _ts(60), LOW_FREQUENCY)
+        result = compute_smoothed_score(handler, df, _ts(60), CRYPTO_24H)
 
         # All scores are NaN -> no valid data -> None or empty
         assert result is None or len(result) == 0
@@ -545,7 +543,7 @@ class TestComputeSmoothedScore:
         df["scored_time"] = pd.to_datetime(df["scored_time"], utc=True)
 
         handler = _mock_handler({1: 10, 2: 11})
-        result = compute_smoothed_score(handler, df, _ts(120), LOW_FREQUENCY)
+        result = compute_smoothed_score(handler, df, _ts(120), CRYPTO_24H)
 
         assert result is not None
         # Miner 2 has inf rolling avg -> zero softmax weight -> filtered out
@@ -578,7 +576,7 @@ class TestComputeSmoothedScore:
         df["scored_time"] = pd.to_datetime(df["scored_time"], utc=True)
 
         handler = _mock_handler({1: 10})
-        result = compute_smoothed_score(handler, df, _ts(60), LOW_FREQUENCY)
+        result = compute_smoothed_score(handler, df, _ts(60), CRYPTO_24H)
 
         assert result is not None
         # XAU has higher coefficient than BTC, so weighted sum != simple sum
@@ -641,10 +639,10 @@ class TestNumericalEquivalence:
         scored_time = _ts(180)
 
         new_result = compute_smoothed_score(
-            handler, prepared, scored_time, LOW_FREQUENCY
+            handler, prepared, scored_time, CRYPTO_24H
         )
         old_result = self._old_compute_smoothed_score(
-            prepared, scored_time, LOW_FREQUENCY
+            prepared, scored_time, CRYPTO_24H
         )
 
         assert new_result is not None
@@ -678,10 +676,10 @@ class TestNumericalEquivalence:
         scored_time = _ts(300)
 
         new_result = compute_smoothed_score(
-            handler, prepared, scored_time, LOW_FREQUENCY
+            handler, prepared, scored_time, CRYPTO_24H
         )
         old_result = self._old_compute_smoothed_score(
-            prepared, scored_time, LOW_FREQUENCY
+            prepared, scored_time, CRYPTO_24H
         )
 
         assert new_result is not None
@@ -732,10 +730,10 @@ class TestNumericalEquivalence:
         scored_time = _ts(n_times * 65 + 60)
 
         new_result = compute_smoothed_score(
-            handler, prepared, scored_time, LOW_FREQUENCY
+            handler, prepared, scored_time, CRYPTO_24H
         )
         old_result = self._old_compute_smoothed_score(
-            prepared, scored_time, LOW_FREQUENCY
+            prepared, scored_time, CRYPTO_24H
         )
 
         assert new_result is not None
@@ -927,7 +925,7 @@ class TestRealisticData:
 
         scored_time = df["scored_time"].max() + timedelta(hours=1)
         result = compute_smoothed_score(
-            handler, prepared, scored_time, LOW_FREQUENCY
+            handler, prepared, scored_time, CRYPTO_24H
         )
 
         assert result is not None
@@ -936,7 +934,7 @@ class TestRealisticData:
         # Reward weights should sum to smoothed_score_coefficient
         total_weight = sum(r["reward_weight"] for r in result)
         assert total_weight == pytest.approx(
-            LOW_FREQUENCY.smoothed_score_coefficient, abs=1e-4
+            SMOOTHED_SCORE_COEFFICIENT, abs=1e-4
         )
 
         # All smoothed scores should be non-negative
@@ -987,7 +985,7 @@ class TestRealisticData:
 
         handler = _mock_handler({1: 10, 2: 11, 3: 12})
         result = compute_smoothed_score(
-            handler, prepared, _ts(120), LOW_FREQUENCY
+            handler, prepared, _ts(120), CRYPTO_24H
         )
 
         assert result is not None
@@ -1012,14 +1010,14 @@ class TestRealisticData:
 
         scored_time = df["scored_time"].max() + timedelta(hours=1)
         result = compute_smoothed_score(
-            handler, prepared, scored_time, HIGH_FREQUENCY
+            handler, prepared, scored_time, CRYPTO_1H
         )
 
         assert result is not None
         assert len(result) > 0
         total_weight = sum(r["reward_weight"] for r in result)
         assert total_weight == pytest.approx(
-            HIGH_FREQUENCY.smoothed_score_coefficient, abs=1e-4
+            SMOOTHED_SCORE_COEFFICIENT, abs=1e-4
         )
 
     def test_asset_coefficient_weighting(self):
@@ -1044,7 +1042,7 @@ class TestRealisticData:
         handler = _mock_handler({1: 10})
         prepared = prepare_df_for_moving_average(df)
         result = compute_smoothed_score(
-            handler, prepared, _ts(180), LOW_FREQUENCY
+            handler, prepared, _ts(180), CRYPTO_24H
         )
 
         assert result is not None
@@ -1133,7 +1131,7 @@ class TestRealisticData:
         scored_time = df["scored_time"].max() + timedelta(hours=1)
 
         result = compute_smoothed_score(
-            handler, prepared, scored_time, LOW_FREQUENCY
+            handler, prepared, scored_time, CRYPTO_24H
         )
         assert result is not None
         assert len(result) > 200  # ~248 miners expected
@@ -1153,10 +1151,10 @@ class TestEndToEnd:
         scored_time = _ts(180)
 
         low_result = compute_smoothed_score(
-            handler, prepared, scored_time, LOW_FREQUENCY
+            handler, prepared, scored_time, CRYPTO_24H
         )
         high_result = compute_smoothed_score(
-            handler, prepared, scored_time, HIGH_FREQUENCY
+            handler, prepared, scored_time, CRYPTO_1H
         )
 
         assert low_result is not None
@@ -1194,7 +1192,7 @@ class TestEndToEnd:
 
         handler = _mock_handler({1: 10, 2: 11, 3: 12})
         result = compute_smoothed_score(
-            handler, prepared, _ts(180), LOW_FREQUENCY
+            handler, prepared, _ts(180), CRYPTO_24H
         )
 
         assert result is not None
@@ -1215,12 +1213,12 @@ class TestEndToEnd:
 
         prepared1 = prepare_df_for_moving_average(df)
         result1 = compute_smoothed_score(
-            handler, prepared1, scored_time, LOW_FREQUENCY
+            handler, prepared1, scored_time, CRYPTO_24H
         )
 
         prepared2 = prepare_df_for_moving_average(df)
         result2 = compute_smoothed_score(
-            handler, prepared2, scored_time, LOW_FREQUENCY
+            handler, prepared2, scored_time, CRYPTO_24H
         )
 
         assert result1 is not None and result2 is not None

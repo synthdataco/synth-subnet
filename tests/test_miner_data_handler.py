@@ -12,6 +12,7 @@ from synth.db.models import (
     Miner,
 )
 from synth.validator import response_validation_v2
+from synth.validator import competition_config
 from synth.validator.prompt_config import PromptConfig
 from synth.simulation_input import SimulationInput
 from synth.validator.miner_data_handler import MinerDataHandler
@@ -68,7 +69,7 @@ def test_get_values_within_range(db_engine: Engine):
     handler.save_responses(simulation_data, simulation_input, datetime.now())
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
     assert validator_requests is not None
     assert len(validator_requests) == 1
@@ -127,7 +128,7 @@ def test_get_values_ongoing_range(db_engine: Engine):
     handler.save_responses(simulation_data, simulation_input, datetime.now())
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
 
     assert validator_requests is not None
@@ -196,7 +197,7 @@ def test_multiple_records_for_same_miner(db_engine: Engine):
     )
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
     assert validator_requests is not None
     assert len(validator_requests) == 2
@@ -281,7 +282,7 @@ def test_multiple_records_for_same_miner_with_overlapping(db_engine: Engine):
     )
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
     assert validator_requests is not None
     assert len(validator_requests) == 1
@@ -313,7 +314,7 @@ def test_no_data_for_miner(db_engine: Engine):
     handler = MinerDataHandler(db_engine)
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
     assert validator_requests is not None
     assert len(validator_requests) == 0
@@ -353,7 +354,7 @@ def test_get_values_incorrect_format(db_engine: Engine):
     handler.save_responses(simulation_data, simulation_input, datetime.now())
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
     assert validator_requests is not None
     assert len(validator_requests) == 1
@@ -378,7 +379,7 @@ def test_set_get_scores(db_engine: Engine):
     handler, _, _ = prepare_random_predictions(db_engine, start_time)
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
     assert validator_requests is not None
     assert len(validator_requests) == 1
@@ -387,6 +388,7 @@ def test_set_get_scores(db_engine: Engine):
         handler,
         price_data_provider,
         validator_requests[0],
+        competition_config.CRYPTO_24H,
     )
 
     assert prompt_scores is not None
@@ -398,6 +400,8 @@ def test_set_get_scores(db_engine: Engine):
     miner_scores_df = handler.get_miner_scores(
         scored_time=scored_time,
         window_days=4,
+        time_length=86400,
+        asset_list=["BTC"],
     )
 
     print("miner_scores_df", miner_scores_df)
@@ -479,7 +483,7 @@ def test_set_miner_scores_upsert_preserves_individual_values(
     )
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
     assert len(validator_requests) >= 1
 
@@ -576,13 +580,8 @@ LOW_TEST_CONFIG = PromptConfig(
     label="low",
     time_length=86400,
     time_increment=300,
-    initial_delay=0,
     cycle_interval_minutes=5,
     timeout_extra_seconds=60,
-    scoring_intervals={},
-    window_days=10,
-    softmax_beta=-0.1,
-    smoothed_score_coefficient=0.5,
     thin_after_minutes=30,
     thin_bucket_seconds=3600,
 )
@@ -592,13 +591,8 @@ HIGH_TEST_CONFIG = PromptConfig(
     label="high",
     time_length=3600,
     time_increment=60,
-    initial_delay=0,
     cycle_interval_minutes=2,
     timeout_extra_seconds=60,
-    scoring_intervals={},
-    window_days=3,
-    softmax_beta=-0.2,
-    smoothed_score_coefficient=0.5,
     thin_after_minutes=10,
     thin_bucket_seconds=600,
 )
@@ -981,8 +975,9 @@ def test_scoring_path_skips_thinned_requests(db_engine: Engine):
 
     requests = handler.get_validator_requests_to_score(
         scored_time=scored_time,
-        window_days=LOW_TEST_CONFIG.window_days,
+        window_days=10,
         time_length=LOW_TEST_CONFIG.time_length,
+        asset_list=["ETH"],
     )
     returned_ids = {int(r.id) for r in (requests or [])}
     assert keeper_vr_id in returned_ids
@@ -1128,7 +1123,10 @@ def test_get_predictions_by_request_hydrates_from_bigtable(
     )
 
     validator_request = handler.get_validator_requests_to_score(
-        datetime.fromisoformat(start_time) + timedelta(days=2), 7
+        datetime.fromisoformat(start_time) + timedelta(days=2),
+        7,
+        86400,
+        ["BTC"],
     )[0]
     result = handler.get_predictions_by_request(validator_request)
     assert len(result) == 1
@@ -1183,7 +1181,10 @@ def test_get_predictions_by_request_missing_bigtable_row_returns_empty(
     )
 
     validator_request = handler.get_validator_requests_to_score(
-        datetime.fromisoformat(start_time) + timedelta(days=2), 7
+        datetime.fromisoformat(start_time) + timedelta(days=2),
+        7,
+        86400,
+        ["BTC"],
     )[0]
     result = handler.get_predictions_by_request(validator_request)
     assert result[0].prediction == []

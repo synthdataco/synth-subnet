@@ -17,7 +17,7 @@ from synth.validator.forward import (
 from synth.db.models import Miner, MinerReward
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.price_data_provider import PriceDataProvider
-from synth.validator import prompt_config
+from synth.validator import competition_config
 from tests.utils import prepare_random_predictions, recent_start_time
 
 
@@ -35,12 +35,17 @@ def test_calculate_rewards_and_update_scores(db_engine: Engine):
         miner_data_handler=handler,
         price_data_provider=price_data_provider,
         scored_time=scored_time,
-        prompt=prompt_config.LOW_FREQUENCY,
+        comp=competition_config.CRYPTO_24H,
     )
 
     assert success
 
-    miner_scores_df = handler.get_miner_scores(scored_time, 10)
+    miner_scores_df = handler.get_miner_scores(
+        scored_time,
+        10,
+        competition_config.CRYPTO_24H.time_length,
+        competition_config.CRYPTO_24H.asset_list,
+    )
 
     assert len(miner_scores_df) == len(miner_uids)
 
@@ -61,7 +66,7 @@ def test_calculate_moving_average_and_update_rewards(db_engine: Engine):
         miner_data_handler=handler,
         price_data_provider=price_data_provider,
         scored_time=scored_time,
-        prompt=prompt_config.LOW_FREQUENCY,
+        comp=competition_config.CRYPTO_24H,
     )
 
     assert success
@@ -162,10 +167,15 @@ def test_calculate_moving_average_and_update_rewards_new_miner(
             miner_data_handler=handler,
             price_data_provider=price_data_provider,
             scored_time=scored_time,
-            prompt=prompt_config.LOW_FREQUENCY,
+            comp=competition_config.CRYPTO_24H,
         )
 
-        miner_scores_df = handler.get_miner_scores(scored_time, 10)
+        miner_scores_df = handler.get_miner_scores(
+            scored_time,
+            10,
+            competition_config.CRYPTO_24H.time_length,
+            competition_config.CRYPTO_24H.asset_list,
+        )
 
         print("miner_scores_df", miner_scores_df)
 
@@ -288,10 +298,15 @@ def test_calculate_moving_average_and_update_rewards_new_miner_registration(
             miner_data_handler=handler,
             price_data_provider=price_data_provider,
             scored_time=scored_time,
-            prompt=prompt_config.LOW_FREQUENCY,
+            comp=competition_config.CRYPTO_24H,
         )
 
-        miner_scores_df = handler.get_miner_scores(scored_time, 10)
+        miner_scores_df = handler.get_miner_scores(
+            scored_time,
+            10,
+            competition_config.CRYPTO_24H.time_length,
+            competition_config.CRYPTO_24H.asset_list,
+        )
 
         print("miner_scores_df: ", miner_scores_df)
 
@@ -407,10 +422,15 @@ def test_calculate_moving_average_and_update_rewards_only_invalid(
             miner_data_handler=handler,
             price_data_provider=price_data_provider,
             scored_time=scored_time,
-            prompt=prompt_config.LOW_FREQUENCY,
+            comp=competition_config.CRYPTO_24H,
         )
 
-        miner_scores_df = handler.get_miner_scores(scored_time, 10)
+        miner_scores_df = handler.get_miner_scores(
+            scored_time,
+            10,
+            competition_config.CRYPTO_24H.time_length,
+            competition_config.CRYPTO_24H.asset_list,
+        )
 
         print("miner_scores_df", miner_scores_df)
 

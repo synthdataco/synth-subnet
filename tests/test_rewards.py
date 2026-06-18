@@ -12,6 +12,7 @@ from synth.validator.reward import (
     compute_softmax,
     get_rewards_multiprocess,
 )
+from synth.validator import competition_config
 from tests.utils import prepare_random_predictions, recent_start_time
 
 
@@ -81,13 +82,14 @@ def test_get_rewards(db_engine):
     price_data_provider = PriceDataProvider()
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7
+        scored_time, 7, 86400, ["BTC"]
     )
 
     prompt_scores, detailed_info, real_prices = get_rewards_multiprocess(
         handler,
         price_data_provider,
         validator_requests[0],
+        competition_config.CRYPTO_24H,
     )
 
     assert prompt_scores is not None

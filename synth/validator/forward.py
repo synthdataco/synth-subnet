@@ -37,7 +37,7 @@ from synth.utils.helpers import (
 )
 from synth.utils.logging import print_execution_time
 from synth.utils.uids import check_uid_availability
-from synth.validator import prompt_config
+from synth.validator import competition_config
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.moving_average import (
     combine_moving_averages,
@@ -92,14 +92,19 @@ def calculate_moving_average_and_update_rewards(
     miner_data_handler: MinerDataHandler,
     scored_time: datetime,
 ) -> list[dict]:
-    prompts = [prompt_config.LOW_FREQUENCY, prompt_config.HIGH_FREQUENCY]
+    competitions = [
+        competition_config.COM_EQU_24H,
+        competition_config.CRYPTO_24H,
+        competition_config.CRYPTO_1H,
+    ]
 
     moving_averages_data: dict[str, list[dict]] = {}
-    for prompt in prompts:
+    for comp in competitions:
         miner_scores_df = miner_data_handler.get_miner_scores(
             scored_time,
-            prompt.window_days,
-            prompt.time_length,
+            comp.window_days,
+            comp.time_length,
+            comp.asset_list,
         )
 
         if miner_scores_df.empty:
@@ -111,16 +116,16 @@ def calculate_moving_average_and_update_rewards(
             miner_data_handler,
             df,
             scored_time,
-            prompt,
+            comp,
         )
 
-        print_rewards_df(moving_averages, prompt.label)
+        print_rewards_df(moving_averages, comp.label)
 
         if moving_averages is None or len(moving_averages) == 0:
             continue
 
         miner_data_handler.update_miner_rewards(moving_averages)
-        moving_averages_data[prompt.label] = moving_averages
+        moving_averages_data[comp.label] = moving_averages
 
     return combine_moving_averages(moving_averages_data)
 
@@ -130,12 +135,12 @@ def calculate_scores(
     miner_data_handler: MinerDataHandler,
     price_data_provider: PriceDataProvider,
     scored_time: datetime,
-    prompt: prompt_config.PromptConfig,
+    comp: competition_config.CompetitionConfig,
     nprocs: int = 2,
 ) -> bool:
     # get latest prediction request from validator
     validator_requests = miner_data_handler.get_validator_requests_to_score(
-        scored_time, prompt.window_days, prompt.time_length
+        scored_time, comp.window_days, comp.time_length, comp.asset_list
     )
 
     if validator_requests is None or len(validator_requests) == 0:
@@ -152,6 +157,7 @@ def calculate_scores(
             miner_data_handler=miner_data_handler,
             price_data_provider=price_data_provider,
             validator_request=validator_request,
+            comp=comp,
             nprocs=nprocs,
         )
 

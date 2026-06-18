@@ -42,6 +42,7 @@ from synth.validator.forward import (
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.price_data_provider import PriceDataProvider
 from synth.validator.storage_backend import STORAGE_BACKEND_BIGTABLE
+from synth.validator import competition_config
 from synth.validator.prompt_config import (
     PromptConfig,
     LOW_FREQUENCY,
@@ -89,10 +90,6 @@ class Validator(BaseValidatorNeuron):
         self.price_data_provider = PriceDataProvider()
 
         self.miner_uids: list[int] = []
-        LOW_FREQUENCY.softmax_beta = self.config.softmax.low.beta
-        HIGH_FREQUENCY.softmax_beta = self.config.softmax.high.beta
-        LOW_FREQUENCY.window_days = self.config.sma.low.days
-        HIGH_FREQUENCY.window_days = self.config.sma.high.days
         LOW_FREQUENCY.data_retention_days = self.config.retention.low.days
         HIGH_FREQUENCY.data_retention_days = self.config.retention.high.days
         LOW_FREQUENCY.cycle_interval_minutes = (
@@ -246,36 +243,31 @@ class Validator(BaseValidatorNeuron):
         # with predictions and calculate the rewards,
         # we store the rewards in the miner_scores table
         # ========================================== #
-        bt.logging.info(
-            f"forward score {LOW_FREQUENCY.label} frequency", "forward_score"
-        )
+        competitions = [
+            competition_config.COM_EQU_24H,
+            competition_config.CRYPTO_24H,
+            competition_config.CRYPTO_1H,
+        ]
+
         current_time = get_current_time()
         scored_time: datetime = round_time_to_minutes(current_time)
 
-        success_low = calculate_scores(
-            self.miner_data_handler,
-            self.price_data_provider,
-            scored_time,
-            LOW_FREQUENCY,
-            self.config.neuron.nprocs,
-        )
+        success_count = 0
+        for comp in competitions:
+            bt.logging.info(f"forward score {comp.label}", "forward_score")
 
-        scored_time: datetime = round_time_to_minutes(current_time)
-        current_time = get_current_time()
-        bt.logging.info(
-            f"forward score {HIGH_FREQUENCY.label} frequency", "forward_score"
-        )
-        success_high = calculate_scores(
-            self.miner_data_handler,
-            self.price_data_provider,
-            scored_time,
-            HIGH_FREQUENCY,
-            self.config.neuron.nprocs,
-        )
+            if calculate_scores(
+                self.miner_data_handler,
+                self.price_data_provider,
+                scored_time,
+                comp,
+                self.config.neuron.nprocs,
+            ):
+                success_count += 1
 
         self.cleanup_history()
 
-        if not success_low and not success_high:
+        if success_count == 0:
             return
 
         # ================= Step 4 ================= #

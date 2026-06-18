@@ -33,7 +33,7 @@ from synth.validator.crps_calculation import calculate_crps_for_miner
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.price_data_provider import PriceDataProvider
 from synth.validator import response_validation_v2
-from synth.validator import prompt_config
+from synth.validator import competition_config
 
 
 # Module level - must be picklable
@@ -151,17 +151,6 @@ def get_process_executor(nprocs: int = 2) -> ProcessPoolExecutor:
     return _PROCESS_EXECUTOR
 
 
-def _get_scoring_intervals(validator_request: ValidatorRequest) -> dict:
-    """Determine scoring intervals based on time length."""
-    is_high_freq = (
-        validator_request.time_length
-        == prompt_config.HIGH_FREQUENCY.time_length
-    )
-    if is_high_freq:
-        return prompt_config.HIGH_FREQUENCY.scoring_intervals
-    return prompt_config.LOW_FREQUENCY.scoring_intervals
-
-
 def _prepare_work_items(
     predictions: list[MinerPrediction],
     shm_name: str,
@@ -253,6 +242,7 @@ def get_rewards_multiprocess(
     miner_data_handler: MinerDataHandler,
     price_data_provider: PriceDataProvider,
     validator_request: ValidatorRequest,
+    comp: competition_config.CompetitionConfig,
     nprocs: int = 2,
 ) -> tuple[typing.Optional[np.ndarray], list, list[dict]]:
     """
@@ -263,6 +253,7 @@ def get_rewards_multiprocess(
     - miner_data_handler (MinerDataHandler): The handler for miner data.
     - price_data_provider (PriceDataProvider): The provider for price data.
     - validator_request (ValidatorRequest): The validator request object.
+    - comp (CompetitionConfig): The competition being scored; supplies the scoring intervals used for CRPS.
     - nprocs (int): Number of processes to use for parallel computation.
 
     Returns:
@@ -302,13 +293,12 @@ def get_rewards_multiprocess(
     shared_prices[:] = prices_array[:]
 
     # Prepare work items
-    scoring_intervals = _get_scoring_intervals(validator_request)
     work_items = _prepare_work_items(
         predictions,
         shm.name,
         prices_array.shape,
         validator_request,
-        scoring_intervals,
+        comp.scoring_intervals,
     )
 
     # Process in parallel (CPU bound - use ProcessPool)

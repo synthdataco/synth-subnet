@@ -1,6 +1,9 @@
 repos:
   - repo: https://github.com/psf/black
-    rev: 25.1.0
+    # Keep in sync with the black version resolved in uv.lock (and used by
+    # `uv run black` / CI). black formatting changes between releases, so a
+    # stale rev here reformats differently than CI and fights the pipeline.
+    rev: 26.5.1
     hooks:
       - id: black
         language_version: python3.11

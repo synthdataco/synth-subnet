@@ -10,7 +10,8 @@ import bittensor as bt
 
 from synth.utils.logging import print_execution_time
 from synth.validator.miner_data_handler import MinerDataHandler
-from synth.validator.prompt_config import PromptConfig
+from synth.validator.competition_config import CompetitionConfig
+from synth.validator.competition_config import SMOOTHED_SCORE_COEFFICIENT
 from synth.validator.reward import compute_softmax
 
 # Per-asset weighting coefficients for score normalization across assets.
@@ -28,6 +29,7 @@ ASSET_COEFFICIENTS = {
     "XRP": 0.5658394110809131,
     "HYPE": 0.4784547133706857,
     "WTIOIL": 0.8475062847978935,
+    "SPCX": 1.6068755936957768,
 }
 
 
@@ -108,7 +110,7 @@ def compute_smoothed_score(
     miner_data_handler: MinerDataHandler,
     input_df: DataFrame,
     scored_time: datetime,
-    prompt_config: PromptConfig,
+    comp: CompetitionConfig,
 ) -> typing.Optional[list[dict]]:
     """Compute smoothed scores and reward weights for all miners.
 
@@ -132,7 +134,7 @@ def compute_smoothed_score(
 
     # Apply per-asset coefficients vectorized (single pass, no per-miner loop).
     # Normalization is per-miner: each miner's scores are divided by the sum of
-    # coefficients for that miner's assets, matching the original per-miner loop behavior.
+    # coefficients for that miner's assets.
     coefs = df["asset"].map(ASSET_COEFFICIENTS).fillna(1.0)
     df["weighted_score"] = df["prompt_score_v3"] * coefs
     miner_coef_sums = coefs.groupby(df["miner_id"]).sum()
@@ -173,7 +175,7 @@ def compute_smoothed_score(
         r["rolling_avg"] for r in filtered_moving_averages_data
     ]
     reward_weight_list = compute_softmax(
-        np.array(rolling_avg_list), prompt_config.softmax_beta
+        np.array(rolling_avg_list), comp.softmax_beta
     )
 
     rewards = []
@@ -187,9 +189,9 @@ def compute_smoothed_score(
                     "miner_uid": item["miner_uid"],
                     "smoothed_score": item["rolling_avg"],
                     "reward_weight": float(reward_weight)
-                    * prompt_config.smoothed_score_coefficient,
+                    * SMOOTHED_SCORE_COEFFICIENT,
                     "updated_at": scored_time.isoformat(),
-                    "prompt_name": prompt_config.label,
+                    "prompt_name": comp.label,
                 }
             )
 
@@ -206,9 +208,9 @@ def print_rewards_df(moving_averages_data: list[dict], label: str = ""):
 def combine_moving_averages(
     moving_averages_data: dict[str, list[dict]],
 ) -> list[dict]:
-    """Combine reward weights from low-frequency and high-frequency competitions.
+    """Combine reward weights from competitions.
 
-    Same miner appearing in both gets their weights summed.
+    Same miner appearing in multiple competitions gets their weights summed.
     """
     map_miner_reward: dict[int, dict] = {}
 

@@ -55,7 +55,7 @@
 
 ## 🔭 1. Overview
 
-> **TL;DR** — Miners submit ensembles of simulated price paths for a basket of crypto, equity, and commodity assets across two timeframes (`24h` and `1h`). Validators score each ensemble with CRPS on price changes over multiple time increments, take a rolling weighted average within a per-timeframe window (10 days for `24h`, 3 days for `1h`), and allocate emissions via softmax — split 50/50 between the two timeframes. Lower CRPS → more emissions.
+> **TL;DR** — Miners submit ensembles of simulated price paths for a basket of crypto, equity, and commodity assets across two timeframes (`24h` and `1h`). Validators score each ensemble with CRPS on price changes over multiple time increments, take a rolling weighted average within a per-timeframe window (10 days for `24h`, 5 days for `1h`), and allocate emissions via softmax — equally split between 3 competitions: Crypto 1h, Crypto 24h, Commodities/Equities 24h. Lower CRPS → more emissions.
 
 ### 1.1. Introduction
 
@@ -91,7 +91,7 @@ sequenceDiagram
         note left of Validator: asset='BTC', start_time='2025-02-10T14:59:00', time_increment=300, etc.
 
         Miner-->>Validator: Prediction results
-        note right of Miner: result: price prediction <br/> [[{"time": "2025-02-10T14:59:00+00:00", "price": 97352.60591372}, ...], ...]
+        note right of Miner: result: price prediction <br/> [<start_time>, <time_increment>, [97352.605, ...], [97361.753, ...], ...]
 
         Validator->>Validator: Run "prediction results" validation function
 
@@ -107,12 +107,13 @@ Miners are tasked with providing probabilistic forecasts of an asset's future pr
 
 The asset set has grown over time:
 
-| Date       | Change                                                                                              |
-| ---------- | --------------------------------------------------------------------------------------------------- |
-| Launch     | BTC only on the `24h` competition. 100 simulated paths, 5-minute increments.                        |
-| 2025-11-13 | Bumped to 1000 paths; added ETH, SOL, XAU to the `24h` competition. Synth begins moving toward HFT. |
-| 2026-01    | Added tokenized equities SPYX, NVDAX, TSLAX, AAPLX, GOOGLX to the `24h` competition.                |
-| 2026-03    | Added XRP, HYPE, WTIOIL to the `24h` competition; added HYPE to the `1h` competition.               |
+| Date       | Change                                                                                                                                                                                                                |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Launch     | BTC only on the `24h` competition. 100 simulated paths, 5-minute increments.                                                                                                                                          |
+| 2025-11-13 | Bumped to 1000 paths; added ETH, SOL, XAU to the `24h` competition. Synth begins moving toward HFT.                                                                                                                   |
+| 2026-01    | Added tokenized equities SPYX, NVDAX, TSLAX, AAPLX, GOOGLX to the `24h` competition.                                                                                                                                  |
+| 2026-03    | Added XRP, HYPE, WTIOIL to the `24h` competition; added HYPE to the `1h` competition.                                                                                                                                 |
+| 2026-06    | Changed the split of the competitions from 2 (1h/24h) to 3 (Crypto 1h, Crypto 24h, Commodities/Equities 24h). Added XRP to the 1h time length, removed XAU from the 1h time length, added SPCX to the 24h time length |
 
 Whereas other subnets ask miners to predict single values for future prices, we’re interested in the miners correctly quantifying uncertainty. We want their price paths to represent their view of the probability distribution of the future price, and we want their paths to encapsulate realistic price dynamics, such as volatility clustering and skewed fat tailed price change distributions. As the network matures, modelling the correlations between asset prices will be essential.
 
@@ -121,36 +122,25 @@ If the miners do a good job, the Synth Subnet will become the world-leading sour
 The checking prompts sent to the miners will have the format:
 (start_time, asset, time_increment, time_horizon, num_simulations)
 
-The two competitions differ on the parameters below:
+The three competitions differ on the parameters below:
 
-| Parameter                      | `24h` competition                                                        | `1h` HFT competition     |
-| ------------------------------ | ------------------------------------------------------------------------ | ------------------------ |
-| Emissions share                | 50%                                                                      | 50%                      |
-| Cycle period (all assets)      | ~60 min                                                                  | ~10 min                  |
-| Start time ($t_0$)             | +1 min from request                                                      | +1 min from request      |
-| Time increment ($\Delta t$)    | 5 min                                                                    | 1 min                    |
-| Time horizon ($T$)             | 24 h                                                                     | 1 h                      |
-| Simulations ($N_{\text{sim}}$) | 1000                                                                     | 1000                     |
-| Assets                         | BTC, ETH, XAU, SOL, SPYX, NVDAX, TSLAX, AAPLX, GOOGLX, XRP, HYPE, WTIOIL | BTC, ETH, SOL, XAU, HYPE |
-| Rolling-average window         | 10 days                                                                  | 3 days                   |
-| Softmax temperature ($\beta$)  | 0.1                                                                      | 0.2 (sharper allocation) |
+| Parameter                      | Crypto 1h                | Crypto 24h               | Commodities/Equities 24h                             |
+| ------------------------------ | ------------------------ | ------------------------ | ---------------------------------------------------- |
+| Emissions share                | 1/3                      | 1/3                      | 1/3                                                  |
+| Cycle period (all assets)      | ~15 min                  | ~15 min                  | ~32 min                                              |
+| Start time ($t_0$)             | +1 min from request      | +1 min from request      | +1 min from request                                  |
+| Time increment ($\Delta t$)    | 1 min                    | 5 min                    | 5 min                                                |
+| Time horizon ($T$)             | 1 h                      | 24 h                     | 24 h                                                 |
+| Simulations ($N_{\text{sim}}$) | 1000                     | 1000                     | 1000                                                 |
+| Assets                         | BTC, ETH, SOL, XRP, HYPE | BTC, ETH, SOL, XRP, HYPE | XAU, SPYX, NVDAX, GOOGLX, TSLAX, AAPLX, WTIOIL, SPCX |
+| Rolling-average window         | 5 days                   | 10 days                  | 10 days                                              |
+| Softmax temperature ($\beta$)  | 0.3 (sharper allocation) | 0.15                     | 0.15                                                 |
 
-**Asset Weights**
+The validator requests are sent to miner following this schedule:
 
-| Asset  | Weight             | Competitions |
-| ------ | ------------------ | ------------ |
-| BTC    | 1.0                | `24h`, `1h`  |
-| ETH    | 0.7064366394033871 | `24h`, `1h`  |
-| XAU    | 1.7370922597118699 | `24h`, `1h`  |
-| SOL    | 0.6310037175639559 | `24h`, `1h`  |
-| SPYX   | 3.437935601155441  | `24h`        |
-| NVDAX  | 1.6028217601617174 | `24h`        |
-| TSLAX  | 1.6068755936957768 | `24h`        |
-| AAPLX  | 2.0916380815843123 | `24h`        |
-| GOOGLX | 1.6827392777257926 | `24h`        |
-| XRP    | 0.5658394110809131 | `24h`        |
-| HYPE   | 0.4784547133706857 | `24h`, `1h`  |
-| WTIOIL | 0.8475062847978935 | `24h`        |
+| Cycle  | Low frequency (LF)                                                             | High frequency (HF)      |
+| ------ | ------------------------------------------------------------------------------ | ------------------------ |
+| Assets | BTC, ETH, SOL, XRP, HYPE, XAU, SPYX, NVDAX, GOOGLX, TSLAX, AAPLX, WTIOIL, SPCX | BTC, ETH, SOL, XRP, HYPE |
 
 Validators cycle through the assets, sending out prediction requests at regular intervals. The miner has until the start time to return ($N_{\text{sim}}$) paths, each containing price predictions at times given by:
 
@@ -165,6 +155,24 @@ where:
 We recommend the miner sends a request to the Pyth Oracle to acquire the price of the asset at the start_time.
 
 If they fail to return predictions by the start_time or the predictions are in the wrong format, the submission is marked invalid and assigned the 90th-percentile score during the per-prompt CRPS transformation (see [§1.4](#14-calculation-of-leaderboard-score)).
+
+The assets and their weights for the rolling average are as follows:
+
+| Asset  | Weight             |
+| ------ | ------------------ |
+| BTC    | 1.0                |
+| ETH    | 0.7064366394033871 |
+| XAU    | 1.7370922597118699 |
+| SOL    | 0.6310037175639559 |
+| SPYX   | 3.437935601155441  |
+| NVDAX  | 1.6028217601617174 |
+| TSLAX  | 1.6068755936957768 |
+| AAPLX  | 2.0916380815843123 |
+| GOOGLX | 1.6827392777257926 |
+| XRP    | 0.5658394110809131 |
+| HYPE   | 0.4784547133706857 |
+| WTIOIL | 0.8475062847978935 |
+| SPCX   | 1.6068755936957768 |
 
 <sup>[Back to top ^][table-of-contents]</sup>
 
@@ -195,7 +203,7 @@ The CRPS values are calculated on the price change in basis points for each inte
 
 To comprehensively assess the miners' forecasts, the CRPS is applied to sets of price changes in basis points over different time increments. The exact intervals depend on the prompt type:
 
-- **`24h` prompts**: 5 minutes, 30 minutes, 3 hours, 24 hours.
+- **`24h` LF prompts**: 5 minutes, 30 minutes, 3 hours, 24 hours.
 - **`1h` HFT prompts**: 1, 2, 5, 15, 30, and 60 minutes, plus a "gaps from start" series measured at every 5-minute offset between 5 and 60 minutes (i.e. price change from $t_0$ to $t_0 + 5\text{min}$, $t_0 + 10\text{min}$, …, $t_0 + 60\text{min}$).
 
 For each time increment:
@@ -218,24 +226,16 @@ sequenceDiagram
     participant Bittensor
 
     loop Continuously
-        par 24h competition
+        loop 3 Competitions
             Validator->>Storage: Get matured predictions (≥24h old)
             Validator->>PricesProvider: Get real prices
             Validator->>Validator: CRPS sum, cap worst 10% / invalid at 90th pct, subtract best
             Validator->>Storage: Save per-request scores
-            Validator->>Storage: Get scores in 10-day window
-            Validator->>Validator: Weighted rolling average → softmax (β=0.1) → w_24h(i)
-            Validator->>Storage: Save w_24h
-        and 1h competition
-            Validator->>Storage: Get matured predictions (≥1h old)
-            Validator->>PricesProvider: Get real prices
-            Validator->>Validator: CRPS sum, cap worst 10% / invalid at 90th pct, subtract best
-            Validator->>Storage: Save per-request scores
-            Validator->>Storage: Get scores in 3-day window
-            Validator->>Validator: Weighted rolling average → softmax (β=0.2) → w_1h(i)
-            Validator->>Storage: Save w_1h
+            Validator->>Storage: Get scores in the rolling  window
+            Validator->>Validator: Weighted rolling average → softmax → weighted_score
+            Validator->>Storage: Save weighted_score
         end
-        Note over Validator: Combine: w(i) = 0.5·w_24h(i) + 0.5·w_1h(i)
+        Note over Validator: Combine: w(i) = 1/3·w_1h_crypto(i) + 1/3·w_24h_crypto(i) + 1/3·w_24h_com_equ(i)
         Validator->>Bittensor: Send combined weights w(i)
     end
 ```
@@ -252,7 +252,7 @@ After calculating the sum of the CRPS values, the validator transforms the resul
 
 #### Rolling Average (Leaderboard Score)
 
-The validator is required to store the historic request scores (as calculated in the previous step) for each miner. After each new request is scored, the validator recalculates the ‘leaderboard score’ for each miner, using a rolling average over their past **per-request** scores within a per-timeframe window (10 days for the `24h` competition, 3 days for the `1h` HFT competition), weighted by asset-specific weights. The `1h` competition runs ~6× more cycles per day than `24h` (every ~10 min vs every ~60 min), so it accumulates per-miner samples much faster — hence the shorter window.
+The validator is required to store the historic request scores (as calculated in the previous step) for each miner. After each new request is scored, the validator recalculates the ‘leaderboard score’ for each miner, using a rolling average over their past **per-request** scores within a per-timeframe window, weighted by asset-specific weights. The `1h` prompts runs ~6× more cycles per day than `24h`, so it accumulates per-miner samples much faster — hence the shorter window.
 
 This approach emphasizes recent performance while still accounting for historical scores.
 The leaderboard score for miner $i$ at time $t$ is calculated as:
@@ -265,7 +265,7 @@ where:
 
 - $S_{i,j}$ is the score of miner $i$ at request $j$.
 - $w_{k,j}$ is the weight given to asset $k$ scored at request $j$.
-- The sum runs over all requests $j$ such that $t - t_j \leq T$, where $T$ is the per-timeframe rolling window size (10 days for `24h`, 3 days for `1h`).
+- The sum runs over all requests $j$ such that $t - t_j \leq T$, where $T$ is the per-timeframe rolling window size.
 
 Thus, highest-ranking miners are those with the lowest calculated scores.
 
@@ -280,10 +280,10 @@ $$
 where:
 
 - $L_i(t)$ is in basis points (inherited from the CRPS units in §1.3).
-- $\beta$ is a per-competition softmax temperature: `0.1` for the `24h` competition and `0.2` for the `1h` HFT competition (so the `1h` competition allocates emissions more sharply across miners).
+- $\beta$ is a per-competition softmax temperature (see §1.2).
 - $E(t)$ is the total emission at time $t$.
 
-The two competitions are scored independently. Their softmax weights are then each scaled by 50% (the emissions split shown in §1.2) and summed for miners that placed on both.
+The three competitions are scored independently. Their softmax weights are then each scaled by one third (the emissions split shown in §1.2) and summed for miners that placed on multiple competitions.
 
 <sup>[Back to top ^][table-of-contents]</sup>
 
@@ -296,10 +296,11 @@ The fastest way to validate your environment and the reference miner locally:
 ```shell
 git clone https://github.com/synthdataco/synth-subnet.git
 cd synth-subnet
-curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv, if you don't have it
-source $HOME/.local/bin/env                       # put uv on PATH in the current shell
+curl -LsSf https://astral.sh/uv/install.sh | sh # install uv, if you don't have it
+source $HOME/.local/bin/env # put uv on PATH in the current shell
+export PYTHONPATH=.
 uv sync && source .venv/bin/activate
-python synth/miner/run.py   # prints "CORRECT" if the dummy model's output format is valid
+python synth/miner/run.py # prints "CORRECT" if the dummy model's output format is valid
 ```
 
 From there, follow the [miner tutorial](./docs/miner_tutorial.md) to plug in your own model, register a Bittensor wallet, and launch the miner under PM2. Validators should jump straight to the [validator guide](./docs/validator_guide.md).
