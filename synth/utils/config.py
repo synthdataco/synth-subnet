@@ -125,20 +125,6 @@ def add_miner_args(_, parser):
     )
 
     parser.add_argument(
-        "--blacklist.force_validator_permit",
-        action="store_true",
-        help="If set, we will force incoming requests to have a permit.",
-        default=False,
-    )
-
-    parser.add_argument(
-        "--blacklist.allow_non_registered",
-        action="store_true",
-        help="If set, miners will accept queries from non registered entities. (Dangerous!)",
-        default=False,
-    )
-
-    parser.add_argument(
         "--blacklist.validator_min_stake",
         type=int,
         default=1000,

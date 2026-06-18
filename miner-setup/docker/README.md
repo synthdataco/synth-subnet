@@ -84,4 +84,4 @@ docker compose up -d
 - Port 8091 must be open and accessible from the internet for validators to reach your miner
 - Wallet data persists in the `wallet-data` Docker volume — it survives container restarts
 - First CRPS scores appear ~25 hours after your first prediction submission
-- Monitor performance at https://miners.synthdata.co/
+- Monitor performance at https://synthdata.co/miners/performance

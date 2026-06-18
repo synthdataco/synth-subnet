@@ -50,7 +50,7 @@ module.exports = {
     name: "miner",
     interpreter: "/opt/synth-subnet/.venv/bin/python3",
     script: "./neurons/miner.py",
-    args: "--netuid ${netuid} --subtensor.network ${network} --logging.debug --logging.trace --wallet.name ${wallet_name} --wallet.hotkey default --axon.port ${axon_port} --blacklist.force_validator_permit true --blacklist.validator_min_stake 1000",
+    args: "--netuid ${netuid} --subtensor.network ${network} --logging.debug --logging.trace --wallet.name ${wallet_name} --wallet.hotkey default --axon.port ${axon_port} --blacklist.validator_min_stake 65000",
     env: {
       PYTHONPATH: ".",
     },
