@@ -185,16 +185,6 @@ def add_validator_args(_, parser: argparse.ArgumentParser):
     )
 
     parser.add_argument(
-        "--neuron.axon_off",
-        "--axon_off",
-        action="store_true",
-        # Note: the validator needs to serve an Axon with their IP or they may
-        #   be blacklisted by the firewall of serving peers on the network.
-        help="Set this flag to not attempt to serve an Axon.",
-        default=False,
-    )
-
-    parser.add_argument(
         "--neuron.vpermit_tao_limit",
         type=int,
         help="The maximum number of TAO allowed to query a validator with a vpermit.",

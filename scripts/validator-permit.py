@@ -2,10 +2,10 @@ import bittensor as bt
 from substrateinterface import SubstrateInterface  # type: ignore
 
 netuid = 50
+subnet = bt.Metagraph(netuid)
 
 try:
-    subnet = bt.metagraph(netuid)
-    wallet = bt.wallet(name="validator", hotkey="default")
+    wallet = bt.Wallet(name="validator", hotkey="default")
     my_uid = subnet.hotkeys.index(wallet.hotkey.ss58_address)
     print(f"Validator permit: {subnet.validator_permit[my_uid]}")
 except Exception as e:
@@ -18,7 +18,7 @@ print(
 
 hotkey = "5Gy7xTzDwXYw4JV1TUUUt28PwUTQ95HBCYFJMwkaDmnbQUJ5"
 network = "finney"
-sub = bt.subtensor(network)
+sub = bt.Subtensor(network)
 mg = sub.metagraph(netuid)
 if hotkey not in mg.hotkeys:
     print(f"Hotkey {hotkey} deregistered")
@@ -36,3 +36,8 @@ print("fetch Metagraph validator_permit")
 for uid in range(0, 256):
     if mg.validator_permit[uid]:
         print(f"neuron uid {uid} has permit")
+
+print("uid had vpermit and is serving?")
+for uid in range(0, 256):
+    if mg.validator_permit[uid] and mg.axons[uid].is_serving:
+        print(f"axon uid {uid} is serving")

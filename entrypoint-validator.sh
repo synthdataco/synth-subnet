@@ -22,7 +22,6 @@ python3.11 ./neurons/validator.py \
 		--subtensor.network $network \
 		--netuid $netuid \
 		--logging.debug \
-		--neuron.axon_off true \
 		--neuron.vpermit_tao_limit $vpermit_tao_limit \
 		--gcp.log_id_prefix $log_id_prefix \
 		--neuron.nprocs 8 \
@@ -35,7 +34,6 @@ python3.11 ./neurons/validator.py \
 		--subtensor.network $network \
 		--netuid $netuid \
 		--logging.debug \
-		--neuron.axon_off true \
 		--neuron.vpermit_tao_limit $vpermit_tao_limit \
 		--gcp.log_id_prefix $log_id_prefix \
 		--neuron.nprocs 8 \
@@ -48,7 +46,6 @@ python3.11 ./neurons/validator.py \
 		--subtensor.network $network \
 		--netuid $netuid \
 		--logging.debug \
-		--neuron.axon_off true \
 		--neuron.vpermit_tao_limit $vpermit_tao_limit \
 		--gcp.log_id_prefix $log_id_prefix \
 		--neuron.nprocs 8 \

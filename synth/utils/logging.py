@@ -17,6 +17,7 @@ DEFAULT_LOG_BACKUP_COUNT = 10
 # forwards everything at DEBUG (see setup_gcp_logging), so we raise these to
 # WARNING to keep them out of Cloud Logging and local stdout alike.
 NOISY_LOGGERS = (
+    "websockets.client",
     "sqlalchemy.engine",
     "sqlalchemy.orm.mapper.Mapper",
     "sqlalchemy.orm.strategies.LazyLoader",

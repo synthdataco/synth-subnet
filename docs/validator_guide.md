@@ -15,7 +15,6 @@
     - [`--logging.info`](#--logginginfo)
     - [`--logging.trace`](#--loggingtrace)
     - [`--netuid INTEGER`](#--netuid-integer)
-    - [`--neuron.axon_off BOOLEAN`](#--neuronaxon_off-boolean)
     - [`--neuron.device TEXT`](#--neurondevice-text)
     - [`--neuron.disable_set_weights BOOLEAN`](#--neurondisable_set_weights-boolean)
     - [`--neuron.dont_save_events BOOLEAN`](#--neurondont_save_events-boolean)
@@ -469,39 +468,6 @@ Alternatively, you can add the args directly to the command:
 
 ```shell
 pm2 start validator.config.js -- --netuid 247
-```
-
-<sup>[Back to top ^][table-of-contents]</sup>
-
-#### `--neuron.axon_off BOOLEAN`
-
-This will switch off the Axon component.
-
-Default: `false`
-
-Example:
-
-```js
-// validator.config.js
-module.exports = {
-  apps: [
-    {
-      name: "validator",
-      interpreter: "python3",
-      script: "./neurons/validator.py",
-      args: "--neuron.axon_off true",
-      env: {
-        PYTHONPATH: ".",
-      },
-    },
-  ],
-};
-```
-
-Alternatively, you can add the args directly to the command:
-
-```shell
-pm2 start validator.config.js -- --neuron.axon_off true
 ```
 
 <sup>[Back to top ^][table-of-contents]</sup>
