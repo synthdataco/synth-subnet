@@ -127,7 +127,7 @@ def add_miner_args(_, parser):
     parser.add_argument(
         "--blacklist.validator_min_stake",
         type=int,
-        default=1000,
+        default=65000,
         help="Minimum validator stake to accept forward requests from as a miner",
     )
 
