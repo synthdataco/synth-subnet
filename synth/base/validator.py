@@ -97,7 +97,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 subtensor=self.subtensor,
                 wallet=self.wallet,
                 ip=external_ip,
-                port=8091,  # default axon port because we only care about the IP
+                port=int(self.config.axon.port),
                 protocol=4,
                 netuid=self.config.netuid,
                 period=DEFAULT_PERIOD,
