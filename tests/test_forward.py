@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 import logging
 from unittest.mock import patch
 
+import pytest
+
 # from numpy.testing import assert_almost_equal
 import bittensor as bt
 
@@ -14,7 +16,13 @@ from synth.validator.forward import (
     calculate_moving_average_and_update_rewards,
     calculate_scores,
 )
-from synth.db.models import Miner, MinerReward
+from synth.db.models import (
+    Miner,
+    MinerPrediction,
+    MinerReward,
+    MinerScore,
+    ValidatorRequest,
+)
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.price_data_provider import PriceDataProvider
 from synth.validator import competition_config
@@ -335,6 +343,108 @@ def test_calculate_moving_average_and_update_rewards_new_miner_registration(
         ]
         print("sum miner_weights", sum(miner_weights))
         # assert_almost_equal(sum(miner_weights), 0.5, decimal=12)
+
+
+def _seed_competition_scores(engine, comp, miner_ids, scores, scored_time):
+    """Insert validator_request + miner_predictions + miner_scores for one
+    competition's first asset, so calculate_moving_average_and_update_rewards
+    can score it without any live price fetch."""
+    now = datetime.now(timezone.utc)
+    with engine.connect() as connection:
+        with connection.begin():
+            vr_id = connection.execute(
+                insert(ValidatorRequest)
+                .values(
+                    start_time=scored_time
+                    - timedelta(seconds=comp.time_length),
+                    asset=comp.asset_list[0],
+                    time_length=comp.time_length,
+                    time_increment=comp.time_increment,
+                    num_simulations=1,
+                )
+                .returning(ValidatorRequest.id)
+            ).scalar_one()
+            for miner_id, score in zip(miner_ids, scores):
+                mp_id = connection.execute(
+                    insert(MinerPrediction)
+                    .values(
+                        validator_requests_id=vr_id,
+                        miner_uid=miner_id,
+                        miner_id=miner_id,
+                        prediction=[],
+                        format_validation=response_validation_v2.CORRECT,
+                        created_at=now,
+                    )
+                    .returning(MinerPrediction.id)
+                ).scalar_one()
+                connection.execute(
+                    insert(MinerScore).values(
+                        miner_uid=miner_id,
+                        scored_time=scored_time,
+                        miner_predictions_id=mp_id,
+                        prompt_score=score,
+                        prompt_score_v3=score,
+                        score_details={},
+                        score_details_v3={
+                            "percentile90": 0.01,
+                            "lowest_score": 0.0,
+                        },
+                    )
+                )
+
+
+def test_moving_average_writes_all_three_competitions(db_engine: Engine):
+    """End-to-end (DB, no live prices): the moving-average update iterates
+    ALL_COMPETITIONS, writes miner_rewards under each competition's label, and
+    the combined weights sum to ~1.0 (3 competitions x SMOOTHED_SCORE_COEFFICIENT).
+    """
+    handler = MinerDataHandler(db_engine)
+    miner_ids = [90101, 90102]  # high ids to avoid collision with other tests
+    scored_time = datetime.now(timezone.utc) - timedelta(hours=1)
+
+    now = datetime.now(timezone.utc)
+    with db_engine.connect() as connection:
+        with connection.begin():
+            connection.execute(
+                insert(Miner).values(
+                    [
+                        {
+                            "id": m,
+                            "miner_uid": m,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                        for m in miner_ids
+                    ]
+                )
+            )
+
+    for comp in competition_config.ALL_COMPETITIONS:
+        _seed_competition_scores(
+            db_engine, comp, miner_ids, [0.002, 0.004], scored_time
+        )
+
+    combined = calculate_moving_average_and_update_rewards(
+        miner_data_handler=handler,
+        scored_time=scored_time,
+    )
+
+    # All three competition labels were written to miner_rewards for our miners.
+    with db_engine.connect() as connection:
+        labels = {
+            row.prompt_name
+            for row in connection.execute(
+                select(MinerReward.prompt_name).where(
+                    MinerReward.miner_id.in_(miner_ids)
+                )
+            ).fetchall()
+        }
+    assert labels == {c.label for c in competition_config.ALL_COMPETITIONS}
+
+    # Each competition contributes SMOOTHED_SCORE_COEFFICIENT, so the combined
+    # per-miner weights sum to ~1.0 across the three competitions.
+    total = sum(item["reward_weight"] for item in combined)
+    assert total == pytest.approx(1.0, abs=1e-6)
 
 
 @patch("synth.miner.simulations.get_asset_price", return_value=90000.0)

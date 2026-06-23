@@ -24,6 +24,7 @@ from synth.validator.moving_average import (
     prepare_df_for_moving_average,
 )
 from synth.validator.competition_config import (
+    COM_EQU_24H,
     CRYPTO_1H,
     CRYPTO_24H,
     SMOOTHED_SCORE_COEFFICIENT,
@@ -460,6 +461,22 @@ class TestComputeSmoothedScore:
         assert result is not None
         assert result[0]["prompt_name"] == "Crypto 1h"
 
+    def test_com_equ_competition_config(self):
+        """COM_EQU_24H sets its label and scores its assets, including the
+        SPCX feed added in the split (must have an ASSET_COEFFICIENTS entry).
+        """
+        times = [_ts(0), _ts(60)]
+        df = _make_scores_df(
+            [1], times, assets=["SPCX", "XAU"], scores=[0.005]
+        )
+        df = prepare_df_for_moving_average(df)
+
+        handler = _mock_handler({1: 10})
+        result = compute_smoothed_score(handler, df, _ts(120), COM_EQU_24H)
+
+        assert result is not None
+        assert result[0]["prompt_name"] == "Commodities/Equities 24h"
+
     def test_better_miner_gets_more_weight(self):
         """Miner with lower scores (better) should get higher reward weight."""
         times = [_ts(0), _ts(60)]
@@ -832,6 +849,39 @@ class TestCombineMovingAverages:
         assert len(result) == 100
         for r in result:
             assert r["reward_weight"] == pytest.approx(0.03)
+
+    def test_three_competitions_combined_sum_to_one(self):
+        """The 2->3 split invariant: each competition's reward_weights sum to
+        SMOOTHED_SCORE_COEFFICIENT (1/3), so combining the three real labels
+        yields a total of ~1.0. Crypto miners (in both Crypto 1h and Crypto
+        24h) get their two weights summed; a commodity miner appears once.
+        """
+        third = SMOOTHED_SCORE_COEFFICIENT
+        data = {
+            "Crypto 1h": [
+                {"miner_id": 1, "miner_uid": 1, "reward_weight": third / 2},
+                {"miner_id": 2, "miner_uid": 2, "reward_weight": third / 2},
+            ],
+            "Crypto 24h": [
+                {"miner_id": 1, "miner_uid": 1, "reward_weight": third / 2},
+                {"miner_id": 2, "miner_uid": 2, "reward_weight": third / 2},
+            ],
+            "Commodities/Equities 24h": [
+                {"miner_id": 3, "miner_uid": 3, "reward_weight": third},
+            ],
+        }
+        result = combine_moving_averages(data)
+
+        total = sum(r["reward_weight"] for r in result)
+        assert total == pytest.approx(1.0, abs=1e-9)
+
+        weights = {r["miner_id"]: r["reward_weight"] for r in result}
+        # crypto miners scored in both crypto competitions -> summed
+        assert weights[1] == pytest.approx(third)
+        assert weights[2] == pytest.approx(third)
+        # commodity/equity miner appears only in its one competition
+        assert weights[3] == pytest.approx(third)
+        assert len(result) == 3
 
 
 # ===========================================================================
