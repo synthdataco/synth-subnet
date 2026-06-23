@@ -38,7 +38,7 @@ LAZER_FEED_ID_MAP: dict[str, int] = {
     "SOL": 6,
     "XRP": 14,
     "HYPE": 110,
-    "XAU": 346,
+    "XAU": 172,
     "AAPLX": 1792,
     "GOOGLX": 1808,
     "NVDAX": 1833,
