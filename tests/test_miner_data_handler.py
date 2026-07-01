@@ -1332,15 +1332,14 @@ def test_prune_preserves_latest_request_per_asset_during_gap(
     was being tombstoned as a non-keeper):
 
         same asset, same hourly bucket, both older than `thin_after_minutes`:
-          - "Keeper"  : start_time = now - 90 min   (smaller id, rn = 1).
-          - "Latest"  : start_time = now - 50 min   (larger id, rn = 2 in
-                        bucket; without the new protection it would be
-                        soft-deleted as redundant).
+          - "Older"   : start_time = now - 90 min.
+          - "Latest"  : start_time = now - 50 min   (freshest per asset).
 
-    Both must stay alive after `density_tapering_predictions`:
-    the keeper because rn = 1 (scoring still uses it), the latest
-    because the new `latest_per_asset` clause shields the freshest
-    request per asset from the rn > 1 deletion.
+    The keeper is a randomized (salted-hash) pick, but the freshest
+    request per asset is always alive after `density_tapering_predictions`:
+    as the keeper itself, or — when it is a non-keeper — via the
+    `latest_per_asset` clause that shields the freshest request per asset
+    from the rn > 1 deletion.
     """
     now = datetime.now()
     keeper_start = now - timedelta(minutes=90)
@@ -1349,7 +1348,8 @@ def test_prune_preserves_latest_request_per_asset_during_gap(
     with db_engine.connect() as connection:
         with connection.begin():
             miner = _insert_miner(connection, miner_uid=320)
-            keeper_id = _insert_prediction(
+            # Older, non-latest request that contends for the bucket keeper.
+            _insert_prediction(
                 connection,
                 miner_id=miner,
                 asset="ETH",
@@ -1371,13 +1371,7 @@ def test_prune_preserves_latest_request_per_asset_during_gap(
     MinerDataHandler(db_engine).density_tapering_predictions(LOW_TEST_CONFIG)
 
     with db_engine.connect() as connection:
-        keeper_row = _fetch_prediction_state(connection, keeper_id)
         latest_row = _fetch_prediction_state(connection, latest_id)
-
-        assert keeper_row is not None
-        assert (
-            keeper_row.deleted_at is None
-        ), "Bucket keeper (rn = 1) must stay alive — scoring still uses it."
 
         assert latest_row is not None
         assert latest_row.deleted_at is None, (
@@ -1402,12 +1396,16 @@ def test_prune_drops_protection_once_latest_ages_past_time_length(
     crosses its 24h forecast window while still being the newest):
 
         same asset, same hourly bucket, BOTH older than 24h (`time_length`):
-          - "Keeper"        : start_time = anchor + 5 min  (rn = 1, kept).
-          - "Stale latest"  : start_time = anchor + 40 min (rn = 2;
-                              is the latest_per_asset row, but its
+          - "Older"         : start_time = anchor + 5 min.
+          - "Stale latest"  : start_time = anchor + 40 min (freshest, but its
                               `start_time` is older than `now - time_length`,
-                              so the CTE filters it out → no protection
-                              → soft-deleted by the normal rn > 1 rule).
+                              so latest_per_asset filters it out → no
+                              protection).
+
+    latest_per_asset is empty, so the bucket collapses to a single
+    (randomized) keeper: exactly one of the two survives and the other is
+    thinned. If the stale latest were still protected, both would stay
+    alive.
     """
     now = datetime.now()
     # Pin to an hour boundary 26h ago so both requests fall in the same
@@ -1443,20 +1441,11 @@ def test_prune_drops_protection_once_latest_ages_past_time_length(
     MinerDataHandler(db_engine).density_tapering_predictions(LOW_TEST_CONFIG)
 
     with db_engine.connect() as connection:
-        keeper_row = _fetch_prediction_state(connection, keeper_id)
-        stale_row = _fetch_prediction_state(connection, stale_latest_id)
-
-        assert keeper_row is not None
-        assert keeper_row.deleted_at is None
-        assert keeper_row.prediction == [[{"price": 1.0}]]
-
-        assert stale_row is not None
-        assert stale_row.deleted_at is not None, (
-            "A latest request older than `time_length` must NOT be "
-            "protected — otherwise it would stay alive into its scoring "
-            "window and create a duplicate scorable row in its bucket."
+        # Protection is off (latest_per_asset empty), so exactly one row —
+        # the randomized keeper — survives; both surviving would mean the
+        # stale latest was wrongly protected into its scoring window.
+        alive, thinned = _split_alive_thinned(
+            connection, [keeper_id, stale_latest_id]
         )
-        assert stale_row.prediction == {
-            "deleted": True,
-            "reason": "thinned",
-        }
+    assert len(alive) == 1
+    assert len(thinned) == 1
