@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import typing
 import logging
 import math
+import os
 
 
 import bittensor as bt
@@ -85,6 +86,17 @@ class MinerDataHandler:
         # When set, prediction payloads are shipped to Bigtable and the
         # Postgres `prediction` column holds a sentinel + `bigtable_key`.
         self.bigtable_storage = bigtable_storage
+        # Optional salt for density-tapering keeper selection. The kept
+        # validator_request per bucket is picked by md5(id || salt), so the
+        # keeper is spread across the bucket rather than always its earliest
+        # member. Unset falls back to md5(id); warn once so that's not
+        # silent.
+        self.thinning_salt = os.getenv("THINNING_SALT", "")
+        if not self.thinning_salt:
+            bt.logging.warning(
+                "THINNING_SALT is not set; density-tapering keeper "
+                "selection falls back to md5(id)."
+            )
 
     def get_miner_uids(self, connection: Connection):
         ranked_miners = select(
@@ -788,10 +800,16 @@ class MinerDataHandler:
         Selects validator_requests with this cycle's `time_length` whose
         `start_time` is older than `prompt_config.thin_after_minutes`,
         buckets them by (asset, floor(epoch(start_time)/thin_bucket_seconds)),
-        keeps the smallest-id row per bucket, and soft-deletes every
-        miner_prediction under the non-keeper requests by setting
-        `deleted_at` and replacing `prediction` with a tombstone (same
-        pattern as `cleanup_old_history`).
+        keeps one row per bucket, and soft-deletes every miner_prediction
+        under the non-keeper requests by setting `deleted_at` and replacing
+        `prediction` with a tombstone (same pattern as `cleanup_old_history`).
+
+        The keeper is the row with the smallest `md5(id || thinning_salt)`,
+        not the smallest id, so the kept request is spread across the bucket
+        rather than always being its earliest member. The hash is stable per
+        row (idempotent across runs): the global-min-hash row, once eligible,
+        is always rn=1 and never thinned, so every bucket keeps exactly one
+        row and converges to that keeper well before it enters scoring range.
 
         The most recent request per asset is additionally preserved (until
         it is older than `time_length`, i.e. enters scoring range) so
@@ -822,7 +840,7 @@ class MinerDataHandler:
                 SELECT vr_id,
                        ROW_NUMBER() OVER (
                            PARTITION BY asset, bucket
-                           ORDER BY vr_id ASC
+                           ORDER BY md5(vr_id::text || :salt), vr_id ASC
                        ) AS rn
                   FROM old
             ),
@@ -862,6 +880,7 @@ class MinerDataHandler:
                             "thin_cutoff": thin_cutoff,
                             "scoring_cutoff": scoring_cutoff,
                             "now": now,
+                            "salt": self.thinning_salt,
                         },
                     )
         except Exception as e:

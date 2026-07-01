@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+import hashlib
+import os
 
 import pytest
 from sqlalchemy import Engine, select, delete
@@ -665,6 +667,24 @@ def _fetch_prediction_state(connection, mp_id: int):
     ).fetchone()
 
 
+def _split_alive_thinned(connection, mp_ids: list[int]):
+    """Partition the given prediction ids into (alive, thinned) after a
+    tapering run. Keeper selection is a salted hash of the request id, so
+    tests assert the survivor *count* per bucket, not which id survives.
+    Every thinned row must carry the tombstone."""
+    alive, thinned = [], []
+    for mp_id in mp_ids:
+        row = _fetch_prediction_state(connection, mp_id)
+        assert row is not None
+        if row.deleted_at is None:
+            assert isinstance(row.prediction, list)
+            alive.append(mp_id)
+        else:
+            assert row.prediction == {"deleted": True, "reason": "thinned"}
+            thinned.append(mp_id)
+    return alive, thinned
+
+
 def test_prune_leaves_recent_requests_untouched(db_engine: Engine):
     """Validator_requests newer than `thin_after_minutes` are not pruned —
     even when many in the same bucket. Short-term density survives for the
@@ -701,32 +721,20 @@ def test_prune_leaves_recent_requests_untouched(db_engine: Engine):
 
 
 def test_prune_collapses_old_requests_in_same_bucket(db_engine: Engine):
-    """Three old validator_requests for the same asset land in the same
-    hour bucket → the smallest-id request is the keeper; every prediction
-    on the other two requests gets the `thinned` tombstone, including
-    predictions for additional miners on those requests."""
+    """Several old validator_requests for the same asset land in the same
+    hour bucket → exactly one request is the keeper (salted-hash pick) and
+    every prediction on the other requests gets the `thinned` tombstone."""
     bucket_anchor = datetime(2026, 1, 1, 12, 0, 0)
+    ids: list[int] = []
     with db_engine.connect() as connection:
         with connection.begin():
             miner_a = _insert_miner(connection, miner_uid=310)
             miner_b = _insert_miner(connection, miner_uid=311)
 
-            # Keeper request — smallest id, both miners.
-            kept_a = _insert_prediction(
-                connection,
-                miner_id=miner_a,
-                asset="SOL",
-                time_length=LOW_TEST_CONFIG.time_length,
-                start_time=bucket_anchor + timedelta(minutes=5),
-                created_at=bucket_anchor + timedelta(minutes=5),
-                payload=[[{"price": 1.0}]],
-            )
-            # Extra request 1 in the same bucket — both miners.
-            extras: list[int] = []
-            for minute in (25, 50):
+            for minute in (5, 25, 50):
                 start = bucket_anchor + timedelta(minutes=minute)
                 for miner_id in (miner_a, miner_b):
-                    extras.append(
+                    ids.append(
                         _insert_prediction(
                             connection,
                             miner_id=miner_id,
@@ -741,21 +749,16 @@ def test_prune_collapses_old_requests_in_same_bucket(db_engine: Engine):
     MinerDataHandler(db_engine).density_tapering_predictions(LOW_TEST_CONFIG)
 
     with db_engine.connect() as connection:
-        keeper = _fetch_prediction_state(connection, kept_a)
-        assert keeper is not None
-        assert keeper.deleted_at is None
-        assert keeper.prediction == [[{"price": 1.0}]]
-
-        for mp_id in extras:
-            row = _fetch_prediction_state(connection, mp_id)
-            assert row is not None
-            assert row.deleted_at is not None
-            assert row.prediction == {"deleted": True, "reason": "thinned"}
+        alive, thinned = _split_alive_thinned(connection, ids)
+        # Each _insert_prediction creates its own validator_request, so the
+        # single surviving request contributes exactly one alive prediction.
+        assert len(alive) == 1
+        assert len(thinned) == len(ids) - 1
 
 
 def test_prune_keeps_one_request_per_asset_per_bucket(db_engine: Engine):
     """Different assets in the same bucket are independent — each asset
-    keeps its smallest-id request. Different buckets are independent —
+    keeps exactly one request. Different buckets are independent —
     each bucket keeps its own request."""
     bucket_anchor = datetime(2026, 1, 1, 12, 0, 0)
     with db_engine.connect() as connection:
@@ -804,11 +807,10 @@ def test_prune_keeps_one_request_per_asset_per_bucket(db_engine: Engine):
     MinerDataHandler(db_engine).density_tapering_predictions(LOW_TEST_CONFIG)
 
     with db_engine.connect() as connection:
-        assert _fetch_prediction_state(connection, btc_keep).deleted_at is None
-        assert (
-            _fetch_prediction_state(connection, btc_prune).deleted_at
-            is not None
-        )
+        # BTC bucket 1 has two requests → exactly one survives.
+        btc_alive, _ = _split_alive_thinned(connection, [btc_keep, btc_prune])
+        assert len(btc_alive) == 1
+        # Single-request buckets are always kept.
         assert _fetch_prediction_state(connection, eth_keep).deleted_at is None
         assert (
             _fetch_prediction_state(connection, btc_next_bucket).deleted_at
@@ -862,11 +864,9 @@ def test_prune_scopes_by_time_length(db_engine: Engine):
     MinerDataHandler(db_engine).density_tapering_predictions(LOW_TEST_CONFIG)
 
     with db_engine.connect() as connection:
-        assert _fetch_prediction_state(connection, low_kept).deleted_at is None
-        assert (
-            _fetch_prediction_state(connection, low_extra).deleted_at
-            is not None
-        )
+        # LOW bucket has two requests → exactly one survives.
+        low_alive, _ = _split_alive_thinned(connection, [low_kept, low_extra])
+        assert len(low_alive) == 1
         # HIGH untouched.
         assert _fetch_prediction_state(connection, high_a).deleted_at is None
         assert _fetch_prediction_state(connection, high_b).deleted_at is None
@@ -910,11 +910,125 @@ def test_prune_high_bucket_is_ten_minutes(db_engine: Engine):
     MinerDataHandler(db_engine).density_tapering_predictions(HIGH_TEST_CONFIG)
 
     with db_engine.connect() as connection:
-        assert _fetch_prediction_state(connection, kept_a).deleted_at is None
-        assert (
-            _fetch_prediction_state(connection, extra_a).deleted_at is not None
-        )
+        # Two requests in the same 10-min bucket → exactly one survives.
+        alive, _ = _split_alive_thinned(connection, [kept_a, extra_a])
+        assert len(alive) == 1
+        # Adjacent bucket is independent → kept.
         assert _fetch_prediction_state(connection, kept_b).deleted_at is None
+
+
+def test_thinning_without_salt_falls_back_to_md5_id(
+    db_engine: Engine, monkeypatch
+):
+    """THINNING_SALT is optional: unset, the handler still constructs and
+    tapering collapses each bucket to exactly one keeper via md5(id)."""
+    monkeypatch.delenv("THINNING_SALT", raising=False)
+    bucket_anchor = datetime(2026, 1, 1, 7, 0, 0)
+    ids: list[int] = []
+    with db_engine.connect() as connection:
+        with connection.begin():
+            miner_id = _insert_miner(connection, miner_uid=370)
+            for minute in (5, 25, 45):
+                start = bucket_anchor + timedelta(minutes=minute)
+                ids.append(
+                    _insert_prediction(
+                        connection,
+                        miner_id=miner_id,
+                        asset="SOL",
+                        time_length=LOW_TEST_CONFIG.time_length,
+                        start_time=start,
+                        created_at=start,
+                        payload=[[{"price": float(minute)}]],
+                    )
+                )
+
+    MinerDataHandler(db_engine).density_tapering_predictions(LOW_TEST_CONFIG)
+
+    with db_engine.connect() as connection:
+        alive, thinned = _split_alive_thinned(connection, ids)
+    assert len(alive) == 1
+    assert len(thinned) == len(ids) - 1
+
+
+def test_tapering_keeper_is_stable_across_runs(db_engine: Engine):
+    """Keeper selection is deterministic per salt, so re-running tapering
+    keeps the same survivor (idempotent) instead of thinning the bucket
+    down to zero over successive runs."""
+    bucket_anchor = datetime(2026, 1, 1, 9, 0, 0)
+    ids: list[int] = []
+    with db_engine.connect() as connection:
+        with connection.begin():
+            miner_id = _insert_miner(connection, miner_uid=350)
+            for minute in (5, 20, 35, 50):
+                start = bucket_anchor + timedelta(minutes=minute)
+                ids.append(
+                    _insert_prediction(
+                        connection,
+                        miner_id=miner_id,
+                        asset="XRP",
+                        time_length=LOW_TEST_CONFIG.time_length,
+                        start_time=start,
+                        created_at=start,
+                        payload=[[{"price": float(minute)}]],
+                    )
+                )
+
+    handler = MinerDataHandler(db_engine)
+    handler.density_tapering_predictions(LOW_TEST_CONFIG)
+    with db_engine.connect() as connection:
+        alive_first, _ = _split_alive_thinned(connection, ids)
+    assert len(alive_first) == 1
+
+    handler.density_tapering_predictions(LOW_TEST_CONFIG)
+    with db_engine.connect() as connection:
+        alive_second, _ = _split_alive_thinned(connection, ids)
+    assert alive_second == alive_first
+
+
+def test_tapering_keeper_matches_salted_hash(db_engine: Engine):
+    """The surviving request is the one with the smallest md5(id || salt),
+    proving the keeper is driven by the secret salt and not by id order."""
+    salt = os.environ["THINNING_SALT"]
+    bucket_anchor = datetime(2026, 1, 1, 8, 0, 0)
+    mp_ids: list[int] = []
+    with db_engine.connect() as connection:
+        with connection.begin():
+            miner_id = _insert_miner(connection, miner_uid=360)
+            for minute in (2, 12, 22, 32, 42, 52):
+                start = bucket_anchor + timedelta(minutes=minute)
+                mp_ids.append(
+                    _insert_prediction(
+                        connection,
+                        miner_id=miner_id,
+                        asset="XAU",
+                        time_length=LOW_TEST_CONFIG.time_length,
+                        start_time=start,
+                        created_at=start,
+                        payload=[[{"price": float(minute)}]],
+                    )
+                )
+
+    with db_engine.connect() as connection:
+        vr_by_mp = {
+            mp_id: connection.execute(
+                select(MinerPrediction.validator_requests_id).where(
+                    MinerPrediction.id == mp_id
+                )
+            ).scalar_one()
+            for mp_id in mp_ids
+        }
+    expected_keeper_mp = min(
+        mp_ids,
+        key=lambda mp: hashlib.md5(
+            f"{vr_by_mp[mp]}{salt}".encode()
+        ).hexdigest(),
+    )
+
+    MinerDataHandler(db_engine).density_tapering_predictions(LOW_TEST_CONFIG)
+
+    with db_engine.connect() as connection:
+        alive, _ = _split_alive_thinned(connection, mp_ids)
+    assert alive == [expected_keeper_mp]
 
 
 def test_scoring_path_skips_thinned_requests(db_engine: Engine):
@@ -961,15 +1075,22 @@ def test_scoring_path_skips_thinned_requests(db_engine: Engine):
     handler = MinerDataHandler(db_engine)
     handler.density_tapering_predictions(LOW_TEST_CONFIG)
 
+    # The keeper is a salted-hash pick, so discover which of the two
+    # same-bucket requests survived and assert the scorer sees only it.
     with db_engine.connect() as connection:
-        keeper_vr_id = connection.execute(
+        alive, thinned = _split_alive_thinned(
+            connection, [keeper_mp, thinned_mp]
+        )
+        assert len(alive) == 1
+        assert len(thinned) == 1
+        survivor_vr_id = connection.execute(
             select(MinerPrediction.validator_requests_id).where(
-                MinerPrediction.id == keeper_mp
+                MinerPrediction.id == alive[0]
             )
         ).scalar_one()
         thinned_vr_id = connection.execute(
             select(MinerPrediction.validator_requests_id).where(
-                MinerPrediction.id == thinned_mp
+                MinerPrediction.id == thinned[0]
             )
         ).scalar_one()
 
@@ -980,7 +1101,7 @@ def test_scoring_path_skips_thinned_requests(db_engine: Engine):
         asset_list=["ETH"],
     )
     returned_ids = {int(r.id) for r in (requests or [])}
-    assert keeper_vr_id in returned_ids
+    assert survivor_vr_id in returned_ids
     assert thinned_vr_id not in returned_ids
 
     # Defense in depth: even if a future caller bypasses the filter
