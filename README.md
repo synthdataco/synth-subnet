@@ -172,7 +172,7 @@ The assets and their weights for the rolling average are as follows:
 | XRP    | 0.5658394110809131 |
 | HYPE   | 0.4784547133706857 |
 | WTIOIL | 0.8475062847978935 |
-| SPCX   | 1.6068755936957768 |
+| SPCX   | 0.4329342627683478 |
 
 <sup>[Back to top ^][table-of-contents]</sup>
 
