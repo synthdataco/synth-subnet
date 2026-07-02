@@ -945,8 +945,20 @@ def test_thinning_without_salt_falls_back_to_md5_id(
     MinerDataHandler(db_engine).density_tapering_predictions(LOW_TEST_CONFIG)
 
     with db_engine.connect() as connection:
+        vr_by_mp = {
+            mp_id: connection.execute(
+                select(MinerPrediction.validator_requests_id).where(
+                    MinerPrediction.id == mp_id
+                )
+            ).scalar_one()
+            for mp_id in ids
+        }
+        expected_keeper_mp = min(
+            ids,
+            key=lambda mp: hashlib.md5(str(vr_by_mp[mp]).encode()).hexdigest(),
+        )
         alive, thinned = _split_alive_thinned(connection, ids)
-    assert len(alive) == 1
+    assert alive == [expected_keeper_mp]
     assert len(thinned) == len(ids) - 1
 
 
