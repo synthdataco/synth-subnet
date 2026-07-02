@@ -31,3 +31,11 @@ def db_engine(setup):
     engine = create_engine(os.environ["DB_URL_TEST"])
     yield engine
     engine.dispose()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def thinning_salt_env():
+    # Provide a stable THINNING_SALT so the salted-hash keeper selection is
+    # reproducible across the suite.
+    os.environ["THINNING_SALT"] = "test-thinning-salt"
+    yield
