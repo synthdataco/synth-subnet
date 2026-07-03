@@ -283,21 +283,21 @@ class BigtablePredictionStorage:
         prompt_label = prompt_config.label_from_time_length(time_length)
         table = self._table_for_label(prompt_label)
 
-        rows = []
-        for key in keys:
-            row = table.direct_row(key)
-            row.delete()
-            rows.append(row)
-
+        # Build DirectRows per chunk (not all up front) so memory stays
+        # bounded by _DELETE_CHUNK_ROWS on large deletes.
         statuses: list = []
-        for i in range(0, len(rows), _DELETE_CHUNK_ROWS):
-            chunk = rows[i : i + _DELETE_CHUNK_ROWS]
-            statuses.extend(table.mutate_rows(chunk) or [])
+        for i in range(0, len(keys), _DELETE_CHUNK_ROWS):
+            rows = []
+            for key in keys[i : i + _DELETE_CHUNK_ROWS]:
+                row = table.direct_row(key)
+                row.delete()
+                rows.append(row)
+            statuses.extend(table.mutate_rows(rows) or [])
 
-        if len(statuses) != len(rows):
+        if len(statuses) != len(keys):
             raise RuntimeError(
                 f"bigtable delete mutate_rows returned {len(statuses)} "
-                f"statuses for {len(rows)} rows"
+                f"statuses for {len(keys)} rows"
             )
 
         failed_keys = []
@@ -315,7 +315,7 @@ class BigtablePredictionStorage:
         if failed_keys:
             raise RuntimeError(
                 f"bigtable delete mutate_rows failed for "
-                f"{len(failed_keys)}/{len(rows)} rows"
+                f"{len(failed_keys)}/{len(keys)} rows"
             )
 
     def _table_for_label(self, prompt_label: str):

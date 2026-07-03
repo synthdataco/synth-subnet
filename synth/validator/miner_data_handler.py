@@ -897,7 +897,7 @@ class MinerDataHandler:
                 )
         except Exception as e:
             bt.logging.exception(
-                f"in prune_redundant_predictions (got an exception): {e}"
+                f"in density_tapering_predictions (got an exception): {e}"
             )
 
     @print_execution_time
