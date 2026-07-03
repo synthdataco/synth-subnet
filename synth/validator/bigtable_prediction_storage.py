@@ -1,10 +1,13 @@
 """Bigtable storage backend for miner predictions.
 
 Each (asset, start_time, miner) is one row, value = raw float32 bytes shaped
-(num_simulations x num_timesteps). Two tables are used so retention is
-enforced by per-table GC policy: one for the `low` prompt and one for the
-`high` prompt. The table choice already encodes the prompt label, so the
-row key omits it.
+(num_simulations x num_timesteps). Two tables are used, one for the `low`
+prompt and one for the `high` prompt. The table choice already encodes the
+prompt label, so the row key omits it.
+
+Rows are deleted explicitly (best-effort) when their Postgres siblings are
+soft-deleted; the per-table GC max-age policy is the backstop for deletes
+that never land.
 
 The Postgres `miner_predictions` row stays — its `prediction` column holds a
 sentinel JSON, and `bigtable_key` holds the row key used here.
@@ -30,6 +33,11 @@ COLUMN_QUALIFIER = b"d"
 
 # Cap the bytes carried by a single mutate_rows RPC
 _MAX_MUTATE_BYTES = 100 * 1024 * 1024
+
+# Cap the entries carried by a single mutate_rows RPC when deleting.
+# Delete mutations have no payload, so the byte cap above doesn't apply;
+# the server limit is 100k entries per MutateRows call.
+_DELETE_CHUNK_ROWS = 10_000
 
 # Zero-pad miner_id so lexicographic order inside a range scan matches
 # numeric order. 6 digits cover the foreseeable miners.id space (Postgres
@@ -237,9 +245,9 @@ class BigtablePredictionStorage:
                 if isinstance(row.row_key, bytes)
                 else row.row_key
             )
-            # The range scan also surfaces rows whose Postgres siblings
-            # were soft-deleted (density tapering doesn't touch Bigtable).
-            # Filter to the keys the caller asked for.
+            # The range scan can still surface rows whose Postgres
+            # siblings were soft-deleted: deletes are best-effort and can
+            # fail or lag behind. Filter to the keys the caller asked for.
             if key not in wanted:
                 continue
             cells = row.cells.get(COLUMN_FAMILY, {}).get(COLUMN_QUALIFIER, [])
@@ -258,6 +266,57 @@ class BigtablePredictionStorage:
                 )
 
         return result
+
+    def delete_predictions(self, time_length: int, keys: list) -> None:
+        """Delete prediction rows from Bigtable by exact row key.
+
+        Called when the Postgres siblings are soft-deleted (density
+        tapering / cleanup_old_history) so the blobs don't sit as dead
+        weight until the per-table GC max-age. Best-effort from the
+        caller's perspective: raises on any unconfirmed delete so the
+        caller can log it — the GC policy remains the backstop for rows
+        whose delete never lands.
+        """
+        if not keys:
+            return
+
+        prompt_label = prompt_config.label_from_time_length(time_length)
+        table = self._table_for_label(prompt_label)
+
+        rows = []
+        for key in keys:
+            row = table.direct_row(key)
+            row.delete()
+            rows.append(row)
+
+        statuses: list = []
+        for i in range(0, len(rows), _DELETE_CHUNK_ROWS):
+            chunk = rows[i : i + _DELETE_CHUNK_ROWS]
+            statuses.extend(table.mutate_rows(chunk) or [])
+
+        if len(statuses) != len(rows):
+            raise RuntimeError(
+                f"bigtable delete mutate_rows returned {len(statuses)} "
+                f"statuses for {len(rows)} rows"
+            )
+
+        failed_keys = []
+        for key, status in zip(keys, statuses):
+            # Same contract as write_predictions: a None status means the
+            # SDK had no per-row response — treat as unconfirmed.
+            code = getattr(status, "code", None)
+            if code is None or code != 0:
+                failed_keys.append(key)
+                message = getattr(status, "message", "no status returned")
+                bt.logging.error(
+                    f"bigtable delete failed for key={key} "
+                    f"code={code} message={message}"
+                )
+        if failed_keys:
+            raise RuntimeError(
+                f"bigtable delete mutate_rows failed for "
+                f"{len(failed_keys)}/{len(rows)} rows"
+            )
 
     def _table_for_label(self, prompt_label: str):
         try:

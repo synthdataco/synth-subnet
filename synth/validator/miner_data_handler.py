@@ -866,11 +866,12 @@ class MinerDataHandler:
                AND validator_requests_id NOT IN (
                    SELECT vr_id FROM latest_per_asset
                )
+            RETURNING miner_predictions.bigtable_key
             """)
         try:
             with self.engine.connect() as connection:
                 with connection.begin():
-                    connection.execute(
+                    result = connection.execute(
                         thin_sql,
                         {
                             "bucket_seconds": (
@@ -883,6 +884,17 @@ class MinerDataHandler:
                             "salt": self.thinning_salt,
                         },
                     )
+                    bigtable_keys = [
+                        key for (key,) in result if key is not None
+                    ]
+            # Postgres is committed at this point. Deleting from Bigtable
+            # after the commit means a rollback can never orphan-delete
+            # blobs; a failed Bigtable delete just leaves rows to age out
+            # via the per-table GC policy (logged by the except below).
+            if self.bigtable_storage is not None and bigtable_keys:
+                self.bigtable_storage.delete_predictions(
+                    prompt_config.time_length, bigtable_keys
+                )
         except Exception as e:
             bt.logging.exception(
                 f"in prune_redundant_predictions (got an exception): {e}"
@@ -918,8 +930,12 @@ class MinerDataHandler:
                                 "reason": "light mode",
                             },
                         )
+                        .returning(MinerPrediction.bigtable_key)
                     )
-                    connection.execute(erase_predictions_statement)
+                    erased = connection.execute(erase_predictions_statement)
+                    bigtable_keys = [
+                        key for (key,) in erased if key is not None
+                    ]
 
                     delete_scores_statement = delete(MinerScore).where(
                         MinerScore.scored_time < cutoff_date_double,
@@ -941,6 +957,14 @@ class MinerDataHandler:
                         .values(real_prices=[])
                     )
                     connection.execute(erase_validator_requests_statement)
+
+            # Same ordering as density_tapering_predictions: delete from
+            # Bigtable only once Postgres is committed; failures leave the
+            # rows to the GC backstop.
+            if self.bigtable_storage is not None and bigtable_keys:
+                self.bigtable_storage.delete_predictions(
+                    prompt_config.time_length, bigtable_keys
+                )
 
         except Exception as e:
             bt.logging.exception(

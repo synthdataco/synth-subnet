@@ -404,3 +404,106 @@ def test_start_time_to_unix_treats_naive_as_utc():
     base = bps._start_time_to_unix("2026-05-25T12:00:00")
     assert bps._start_time_to_unix("2026-05-25T12:00:00+00:00") == base
     assert bps._start_time_to_unix("2026-05-25T12:00:00") == 1779710400
+
+
+def test_delete_predictions_routes_to_low_table():
+    storage = _make_storage_with_mock_tables()
+    rows_by_key = {}
+
+    def _direct_row(key):
+        row = MagicMock(key=key)
+        rows_by_key[key] = row
+        return row
+
+    storage._tables["low"].direct_row.side_effect = _direct_row
+    storage._tables["low"].mutate_rows.side_effect = lambda chunk: [
+        MagicMock(code=0) for _ in chunk
+    ]
+
+    storage.delete_predictions(LOW_TIME_LENGTH, ["k1", "k2"])
+
+    # One DeleteFromRow mutation per key, sent to the low table only.
+    assert set(rows_by_key.keys()) == {"k1", "k2"}
+    for row in rows_by_key.values():
+        row.delete.assert_called_once_with()
+    storage._tables["low"].mutate_rows.assert_called_once()
+    storage._tables["high"].direct_row.assert_not_called()
+
+
+def test_delete_predictions_routes_to_high_table():
+    storage = _make_storage_with_mock_tables()
+    storage._tables["high"].direct_row.side_effect = lambda key: MagicMock(
+        key=key
+    )
+    storage._tables["high"].mutate_rows.side_effect = lambda chunk: [
+        MagicMock(code=0) for _ in chunk
+    ]
+
+    storage.delete_predictions(HIGH_TIME_LENGTH, ["k1"])
+
+    storage._tables["high"].mutate_rows.assert_called_once()
+    storage._tables["low"].direct_row.assert_not_called()
+
+
+def test_delete_predictions_empty_keys_is_noop():
+    storage = _make_storage_with_mock_tables()
+
+    storage.delete_predictions(LOW_TIME_LENGTH, [])
+
+    storage._tables["low"].mutate_rows.assert_not_called()
+    storage._tables["high"].mutate_rows.assert_not_called()
+
+
+def test_delete_predictions_chunks_by_row_count(monkeypatch):
+    storage = _make_storage_with_mock_tables()
+    storage._tables["low"].direct_row.side_effect = lambda key: MagicMock(
+        key=key
+    )
+    storage._tables["low"].mutate_rows.side_effect = lambda chunk: [
+        MagicMock(code=0) for _ in chunk
+    ]
+    monkeypatch.setattr(bps, "_DELETE_CHUNK_ROWS", 2)
+
+    storage.delete_predictions(LOW_TIME_LENGTH, ["k1", "k2", "k3"])
+
+    # 3 keys, 2 per chunk → 2 RPCs.
+    assert storage._tables["low"].mutate_rows.call_count == 2
+
+
+def test_delete_predictions_raises_when_any_mutate_fails():
+    storage = _make_storage_with_mock_tables()
+    storage._tables["low"].direct_row.side_effect = lambda key: MagicMock(
+        key=key
+    )
+    bad = MagicMock()
+    bad.code = 13  # any non-zero
+    bad.message = "boom"
+    storage._tables["low"].mutate_rows.return_value = [
+        MagicMock(code=0),
+        bad,
+    ]
+
+    with pytest.raises(RuntimeError):
+        storage.delete_predictions(LOW_TIME_LENGTH, ["k1", "k2"])
+
+
+def test_delete_predictions_treats_none_status_as_failure():
+    storage = _make_storage_with_mock_tables()
+    storage._tables["low"].direct_row.side_effect = lambda key: MagicMock(
+        key=key
+    )
+    storage._tables["low"].mutate_rows.return_value = [None]
+
+    with pytest.raises(RuntimeError):
+        storage.delete_predictions(LOW_TIME_LENGTH, ["k1"])
+
+
+def test_delete_predictions_raises_on_short_status_list():
+    storage = _make_storage_with_mock_tables()
+    storage._tables["low"].direct_row.side_effect = lambda key: MagicMock(
+        key=key
+    )
+    storage._tables["low"].mutate_rows.return_value = [MagicMock(code=0)]
+
+    with pytest.raises(RuntimeError, match="statuses"):
+        storage.delete_predictions(LOW_TIME_LENGTH, ["k1", "k2"])

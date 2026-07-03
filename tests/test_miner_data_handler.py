@@ -620,6 +620,7 @@ def _insert_prediction(
     start_time: datetime,
     created_at: datetime,
     payload: list,
+    bigtable_key: str | None = None,
 ) -> int:
     vr_id = (
         connection.execute(
@@ -648,6 +649,7 @@ def _insert_prediction(
                 format_validation=response_validation_v2.CORRECT,
                 process_time=1.0,
                 created_at=created_at,
+                bigtable_key=bigtable_key,
             )
             .returning(MinerPrediction.id)
         )
@@ -1461,3 +1463,169 @@ def test_prune_drops_protection_once_latest_ages_past_time_length(
         )
     assert len(alive) == 1
     assert len(thinned) == 1
+
+
+class _DeleteSpyBigtable:
+    """Records delete_predictions calls; other storage methods unused."""
+
+    def __init__(self, fail: bool = False):
+        self.delete_calls: list[tuple[int, list[str]]] = []
+        self.fail = fail
+
+    def delete_predictions(self, time_length: int, keys: list):
+        self.delete_calls.append((time_length, sorted(keys)))
+        if self.fail:
+            raise RuntimeError("bigtable unavailable")
+
+
+def test_density_tapering_deletes_bigtable_rows(db_engine: Engine):
+    """Thinned rows' bigtable_keys are deleted from Bigtable; the keeper's
+    key is not. Keeper choice is a salted hash, so expectations are derived
+    from the post-run Postgres state."""
+    start = (datetime.now() - timedelta(hours=25)).replace(
+        minute=10, second=0, microsecond=0
+    )
+    with db_engine.connect() as connection:
+        with connection.begin():
+            miner_id = _insert_miner(connection, miner_uid=330)
+            mp_ids = [
+                _insert_prediction(
+                    connection,
+                    miner_id=miner_id,
+                    asset="ETH",
+                    time_length=LOW_TEST_CONFIG.time_length,
+                    start_time=start + timedelta(minutes=5 * i),
+                    created_at=start + timedelta(minutes=5 * i),
+                    payload=[[{"price": float(i)}]],
+                    bigtable_key=f"bt-key-{i}",
+                )
+                for i in range(3)
+            ]
+
+    fake = _DeleteSpyBigtable()
+    handler = MinerDataHandler(db_engine, bigtable_storage=fake)
+    handler.density_tapering_predictions(LOW_TEST_CONFIG)
+
+    with db_engine.connect() as connection:
+        alive, thinned = _split_alive_thinned(connection, mp_ids)
+        thinned_keys = sorted(
+            connection.execute(
+                select(MinerPrediction.bigtable_key).where(
+                    MinerPrediction.id.in_(thinned)
+                )
+            ).scalars()
+        )
+    assert len(alive) == 1
+    assert len(thinned) == 2
+    assert fake.delete_calls == [(LOW_TEST_CONFIG.time_length, thinned_keys)]
+
+
+def test_density_tapering_skips_bigtable_without_keys(db_engine: Engine):
+    """Rows without a bigtable_key (Postgres-backend rows) never reach
+    delete_predictions."""
+    start = (datetime.now() - timedelta(hours=25)).replace(
+        minute=10, second=0, microsecond=0
+    )
+    with db_engine.connect() as connection:
+        with connection.begin():
+            miner_id = _insert_miner(connection, miner_uid=331)
+            mp_ids = [
+                _insert_prediction(
+                    connection,
+                    miner_id=miner_id,
+                    asset="ETH",
+                    time_length=LOW_TEST_CONFIG.time_length,
+                    start_time=start + timedelta(minutes=5 * i),
+                    created_at=start + timedelta(minutes=5 * i),
+                    payload=[[{"price": float(i)}]],
+                )
+                for i in range(2)
+            ]
+
+    fake = _DeleteSpyBigtable()
+    handler = MinerDataHandler(db_engine, bigtable_storage=fake)
+    handler.density_tapering_predictions(LOW_TEST_CONFIG)
+
+    with db_engine.connect() as connection:
+        alive, thinned = _split_alive_thinned(connection, mp_ids)
+    assert len(alive) == 1
+    assert len(thinned) == 1
+    assert fake.delete_calls == []
+
+
+def test_density_tapering_bigtable_failure_keeps_tombstones(
+    db_engine: Engine,
+):
+    """A failed Bigtable delete must not roll back the Postgres
+    tombstoning — the rows are left to the GC backstop."""
+    start = (datetime.now() - timedelta(hours=25)).replace(
+        minute=10, second=0, microsecond=0
+    )
+    with db_engine.connect() as connection:
+        with connection.begin():
+            miner_id = _insert_miner(connection, miner_uid=332)
+            mp_ids = [
+                _insert_prediction(
+                    connection,
+                    miner_id=miner_id,
+                    asset="ETH",
+                    time_length=LOW_TEST_CONFIG.time_length,
+                    start_time=start + timedelta(minutes=5 * i),
+                    created_at=start + timedelta(minutes=5 * i),
+                    payload=[[{"price": float(i)}]],
+                    bigtable_key=f"bt-key-fail-{i}",
+                )
+                for i in range(2)
+            ]
+
+    fake = _DeleteSpyBigtable(fail=True)
+    handler = MinerDataHandler(db_engine, bigtable_storage=fake)
+    handler.density_tapering_predictions(LOW_TEST_CONFIG)  # no raise
+
+    with db_engine.connect() as connection:
+        alive, thinned = _split_alive_thinned(connection, mp_ids)
+    assert len(alive) == 1
+    assert len(thinned) == 1
+    assert len(fake.delete_calls) == 1
+
+
+def test_cleanup_old_history_deletes_bigtable_rows(db_engine: Engine):
+    """Rows erased by retention cleanup have their Bigtable rows deleted;
+    rows still inside the retention window are untouched."""
+    now = datetime.now()
+    old = now - timedelta(days=LOW_TEST_CONFIG.data_retention_days + 1)
+    fresh = now - timedelta(days=1)
+    with db_engine.connect() as connection:
+        with connection.begin():
+            miner_id = _insert_miner(connection, miner_uid=333)
+            old_mp = _insert_prediction(
+                connection,
+                miner_id=miner_id,
+                asset="ETH",
+                time_length=LOW_TEST_CONFIG.time_length,
+                start_time=old,
+                created_at=old,
+                payload=[[{"price": 1.0}]],
+                bigtable_key="bt-key-old",
+            )
+            fresh_mp = _insert_prediction(
+                connection,
+                miner_id=miner_id,
+                asset="ETH",
+                time_length=LOW_TEST_CONFIG.time_length,
+                start_time=fresh,
+                created_at=fresh,
+                payload=[[{"price": 2.0}]],
+                bigtable_key="bt-key-fresh",
+            )
+
+    fake = _DeleteSpyBigtable()
+    handler = MinerDataHandler(db_engine, bigtable_storage=fake)
+    handler.cleanup_old_history(LOW_TEST_CONFIG)
+
+    with db_engine.connect() as connection:
+        old_row = _fetch_prediction_state(connection, old_mp)
+        fresh_row = _fetch_prediction_state(connection, fresh_mp)
+    assert old_row.deleted_at is not None
+    assert fresh_row.deleted_at is None
+    assert fake.delete_calls == [(LOW_TEST_CONFIG.time_length, ["bt-key-old"])]
