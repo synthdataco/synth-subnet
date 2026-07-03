@@ -40,7 +40,7 @@ LOW_FREQUENCY = PromptConfig(
     time_increment=300,
     cycle_interval_minutes=5,
     timeout_extra_seconds=60,
-    data_retention_days=12,
+    data_retention_days=11,
     thin_after_minutes=30,
     thin_bucket_seconds=3600,
 )
@@ -52,7 +52,7 @@ HIGH_FREQUENCY = PromptConfig(
     time_increment=60,
     cycle_interval_minutes=2,
     timeout_extra_seconds=0,
-    data_retention_days=4,
+    data_retention_days=6,
     thin_after_minutes=10,
     thin_bucket_seconds=600,
 )
