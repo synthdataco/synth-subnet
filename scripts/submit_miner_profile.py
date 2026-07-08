@@ -58,7 +58,10 @@ def main(args):
             "discord": args.discord or "",
             "linkedin": args.linkedin or "",
         }
-
+    if not args.delete and not any(payload.values()):
+        raise SystemExit(
+            "Refusing to submit empty metadata. Provide at least one field or use --delete."
+        )
     if args.wallet_path:
         wallet = bittensor.Wallet(name=args.wallet_name, path=args.wallet_path)
     else:
