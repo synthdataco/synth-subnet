@@ -34,6 +34,7 @@
   - [4.1. Restrict ingress to validator IPs](#41-restrict-ingress-to-validator-ips)
   - [4.2. Update and run the blacklist function](#42-update-and-run-the-blacklist-function)
   - [4.3. Blacklist parameters](#43-blacklist-parameters)
+- [5. Set up your public miner profile](#5-set-up-your-public-miner-profile)
 
 ### 1. Requirements
 
@@ -449,6 +450,38 @@ The new blacklist function applies a minimum of **65000** stake by default. This
 ### 4.3. Blacklist parameters
 
 - `--blacklist.validator_min_stake 65000` — gates requests by validator stake. The blacklist enforces a minimum of `65000`, even if you configure a lower value.
+<sup>[Back to top ^][table-of-contents]</sup>
+
+## 5. Set up your public miner profile
+
+You can attach public identity metadata to your coldkey — a display name, an avatar image and social handles — shown on your miner profile page on the dashboard. Ownership is proven with an sr25519 signature made with your coldkey: no account or API key is needed.
+
+Run the one-shot submission script on whatever machine holds your coldkey (the key never leaves the machine; only the signature is sent). It prompts for your wallet password to sign, then submits:
+
+```shell
+python scripts/submit_miner_profile.py \
+    --wallet_name my_wallet \
+    --display-name "My Mining Co" \
+    --avatar-url https://example.com/logo.png \
+    --twitter my_handle \
+    --discord my_handle \
+    --linkedin https://www.linkedin.com/in/my-handle
+```
+
+Every submission replaces all five fields, so pass all the values you want shown each time — an omitted field is cleared. To remove your metadata entirely:
+
+```shell
+python scripts/submit_miner_profile.py --wallet_name my_wallet --delete
+```
+
+Field constraints:
+
+- `--display-name` — at most 40 printable characters.
+- `--twitter` / `--discord` — bare handles (no URL), at most 64 characters from letters, digits and `_ . - #`.
+- `--avatar-url` / `--linkedin` — `https://` URLs of at most 300 characters; the linkedin URL must be on `linkedin.com`.
+
+Your coldkey must be (or have been) registered on the subnet, and the signed message expires after 5 minutes — the script signs and submits in one go, so this only matters if your machine's clock is badly off.
+
 <sup>[Back to top ^][table-of-contents]</sup>
 
 <!-- links -->
