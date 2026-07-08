@@ -26,9 +26,9 @@ import time
 import bittensor
 import requests
 
-# Hardcode or set the environment variable WALLET_PASS to the password for
-# the wallet, to skip the interactive decrypt prompt
-# environ["WALLET_PASS"] = ""
+# To skip the interactive decrypt prompt, set WALLET_PASS in your environment, e.g.:
+#   export WALLET_PASS='...'
+# Avoid hardcoding wallet passwords in this script.
 
 
 def canonical_payload_hash(payload: dict) -> str:
