@@ -465,10 +465,11 @@ python scripts/submit_miner_profile.py \
     --avatar-url https://example.com/logo.png \
     --twitter my_handle \
     --discord my_handle \
-    --linkedin https://www.linkedin.com/in/my-handle
+    --linkedin https://www.linkedin.com/in/my-handle \
+    --website https://example.com
 ```
 
-Every submission replaces all five fields, so pass all the values you want shown each time — an omitted field is cleared. To remove your metadata entirely:
+Every submission replaces all six fields, so pass all the values you want shown each time — an omitted field is cleared. To remove your metadata entirely:
 
 ```shell
 python scripts/submit_miner_profile.py --wallet_name my_wallet --delete
@@ -478,7 +479,7 @@ Field constraints:
 
 - `--display-name` — at most 40 printable characters.
 - `--twitter` / `--discord` — bare handles (no URL), at most 64 characters from letters, digits and `_ . - #`.
-- `--avatar-url` / `--linkedin` — `https://` URLs of at most 300 characters; the linkedin URL must be on `linkedin.com`.
+- `--avatar-url` / `--website` / `--linkedin` — `https://` URLs of at most 300 characters; the linkedin URL must be on `linkedin.com` (the website can be any host).
 
 Your coldkey must be (or have been) registered on the subnet, and the signed message expires after 5 minutes — the script signs and submits in one go, so this only matters if your machine's clock is badly off.
 

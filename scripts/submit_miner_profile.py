@@ -7,15 +7,15 @@ rendered on your public miner profile page.
 
 Run this one-shot script on whatever machine holds your coldkey (it never
 leaves the machine; only the signature is sent). Each submission replaces
-all five fields: an omitted field is cleared. Passing --delete removes
+all six fields: an omitted field is cleared. Passing --delete removes
 your metadata entirely.
 
 Field constraints (enforced server-side):
 - display name: at most 40 printable characters
 - twitter / discord: bare handles (no URL), at most 64 characters from
   letters, digits, ``_ . - #``
-- avatar / linkedin: https:// URLs of at most 300 characters; the
-  linkedin URL must be on linkedin.com
+- avatar / website / linkedin: https:// URLs of at most 300 characters;
+  the linkedin URL must be on linkedin.com (website can be any host)
 """
 
 import argparse
@@ -49,6 +49,7 @@ def main(args):
             "twitter": "",
             "discord": "",
             "linkedin": "",
+            "website": "",
         }
     else:
         payload = {
@@ -57,6 +58,7 @@ def main(args):
             "twitter": args.twitter or "",
             "discord": args.discord or "",
             "linkedin": args.linkedin or "",
+            "website": args.website or "",
         }
     if not args.delete and not any(payload.values()):
         raise SystemExit(
@@ -107,6 +109,9 @@ if __name__ == "__main__":
     parser.add_argument("--discord", type=str, help="Discord handle")
     parser.add_argument(
         "--linkedin", type=str, help="https://www.linkedin.com/... URL"
+    )
+    parser.add_argument(
+        "--website", type=str, help="https:// URL of your website"
     )
     parser.add_argument(
         "--delete",
