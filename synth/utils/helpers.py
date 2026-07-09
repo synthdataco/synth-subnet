@@ -109,6 +109,21 @@ def round_time_to_minutes(dt: datetime, extra_seconds=0) -> datetime:
     ) + timedelta(seconds=extra_seconds)
 
 
+def metagraph_refresh_due(
+    last_refresh: datetime | None,
+    now: datetime,
+    interval_minutes: int,
+) -> bool:
+    """Whether a scheduled metagraph refresh is due.
+
+    True when no refresh happened yet or interval_minutes have passed
+    since the last one. The caller stamps its own last-refresh time.
+    """
+    if last_refresh is None:
+        return True
+    return now - last_refresh >= timedelta(minutes=interval_minutes)
+
+
 def from_iso_to_unix_time(iso_time: str):
     # Convert to a datetime object
     dt = datetime.fromisoformat(iso_time).replace(tzinfo=timezone.utc)
