@@ -259,7 +259,7 @@ def query_available_miners_and_save_responses(
 def get_available_miners_and_update_metagraph_history(
     base_neuron: BaseValidatorNeuron,
     miner_data_handler: MinerDataHandler,
-    save: bool = True,
+    save_snapshot: bool,
 ):
     # Sync metagraph to get latest miner addresses
     base_neuron.metagraph.sync(subtensor=base_neuron.subtensor)
@@ -301,10 +301,18 @@ def get_available_miners_and_update_metagraph_history(
             }
             metagraph_info.append(metagraph_item)
 
-    if len(miners) > 0 and save:
+    # Always upsert miner identities: save_responses maps uid -> miner_id
+    # through the miners table, so a new/re-registered uid must have its row
+    # before its first queried predictions are saved (else they are dropped
+    # or attributed to the uid's previous identity). The on-conflict
+    # updated_at bump is load-bearing: it keeps a re-current identity the
+    # newest row for its uid.
+    if len(miners) > 0:
         miner_data_handler.insert_new_miners(miners)
 
-    if len(metagraph_info) > 0 and save:
+    # The metagraph_history snapshot is appended on the caller's schedule,
+    # since downstream analytics read it hourly.
+    if len(metagraph_info) > 0 and save_snapshot:
         miner_data_handler.update_metagraph_history(metagraph_info)
 
     random.shuffle(miner_uids)

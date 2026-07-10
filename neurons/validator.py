@@ -28,6 +28,7 @@ from synth.base.validator import BaseValidatorNeuron
 from synth.simulation_input import SimulationInput
 from synth.utils.helpers import (
     get_current_time,
+    metagraph_refresh_due,
     round_time_to_minutes,
 )
 from synth.utils.logging import print_execution_time, setup_gcp_logging
@@ -55,6 +56,14 @@ CYCLE_LOW_FREQUENCY = "low_frequency"
 CYCLE_HIGH_FREQUENCY = "high_frequency"
 CYCLE_SCORING = "scoring"
 CYCLE_FULL = "full"
+
+# Metagraph schedule (each cycle runs as its own process, with its own
+# timer). The chain sync keeps miner_uids/axon addresses/miner identities
+# fresh for querying; the metagraph_history snapshot feeds downstream
+# analytics that read it hourly, so minute-level snapshots are pure table
+# growth. Only the scoring process writes snapshots.
+METAGRAPH_SYNC_INTERVAL_MINUTES = 15
+METAGRAPH_SNAPSHOT_INTERVAL_MINUTES = 30
 
 
 class Validator(BaseValidatorNeuron):
@@ -90,6 +99,7 @@ class Validator(BaseValidatorNeuron):
         self.price_data_provider = PriceDataProvider()
 
         self.miner_uids: list[int] = []
+        self.last_metagraph_refresh_at: datetime | None = None
         LOW_FREQUENCY.data_retention_days = self.config.retention.low.days
         HIGH_FREQUENCY.data_retention_days = self.config.retention.high.days
         LOW_FREQUENCY.cycle_interval_minutes = (
@@ -143,13 +153,9 @@ class Validator(BaseValidatorNeuron):
             f"{target_config.asset_list}"
         )
 
-    # Keep sync method for backward compatibility if needed
     def forward_validator(self):
-        """Sync entry point - runs the async version"""
-        self.miner_uids = get_available_miners_and_update_metagraph_history(
-            base_neuron=self,
-            miner_data_handler=self.miner_data_handler,
-        )
+        """Boot metagraph refresh, then run this process's cycle forever."""
+        self.refresh_metagraph(interval_minutes=0)  # boot: always due
         if self.cycle_name == CYCLE_LOW_FREQUENCY:
             SequentialScheduler(
                 prompt_config=LOW_FREQUENCY,
@@ -172,19 +178,17 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info(
             "starting the low frequency cycle", "cycle_low_frequency"
         )
-
-        # update the miners, also for the high frequency prompt that will use the same list
         self.forward_prompt(asset, LOW_FREQUENCY)
-        self.miner_uids = get_available_miners_and_update_metagraph_history(
-            base_neuron=self,
-            miner_data_handler=self.miner_data_handler,
-        )
+        # Refresh after the prompt: the scheduler fires just before a minute
+        # boundary, and a chain sync beforehand would push start_time late.
+        self.refresh_metagraph(METAGRAPH_SYNC_INTERVAL_MINUTES)
 
     @print_execution_time
     def cycle_scoring(self):
         bt.logging.info("starting the scoring cycle", "cycle_scoring")
         while True:
             self.forward_score()
+            self.refresh_metagraph(METAGRAPH_SNAPSHOT_INTERVAL_MINUTES)
             time.sleep(5)
 
     @print_execution_time
@@ -193,11 +197,31 @@ class Validator(BaseValidatorNeuron):
             "starting the high frequency cycle", "cycle_high_frequency"
         )
         self.forward_prompt(asset, HIGH_FREQUENCY)
+        self.refresh_metagraph(METAGRAPH_SYNC_INTERVAL_MINUTES)
+
+    def refresh_metagraph(self, interval_minutes: int):
+        """Sync the chain metagraph — refreshing miner_uids and upserting
+        miner identities in the same call, so a newly queryable uid always
+        has its miners row — at most every interval_minutes. Only the
+        scoring process also appends a metagraph_history snapshot. Each
+        cycle runs as its own process, so one timestamp suffices.
+
+        An empty result (degenerate chain response) is applied — the shared
+        metagraph object was just emptied by the sync, so stale uids must
+        not outlive it — but not stamped, so the next cycle retries.
+        """
+        now = get_current_time()
+        if not metagraph_refresh_due(
+            self.last_metagraph_refresh_at, now, interval_minutes
+        ):
+            return
         self.miner_uids = get_available_miners_and_update_metagraph_history(
             base_neuron=self,
             miner_data_handler=self.miner_data_handler,
-            save=False,
+            save_snapshot=self.cycle_name == CYCLE_SCORING,
         )
+        if self.miner_uids:
+            self.last_metagraph_refresh_at = now
 
     @print_execution_time
     def forward_prompt(self, asset: str, prompt_config: PromptConfig):

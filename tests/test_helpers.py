@@ -1,10 +1,11 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 
 from synth.utils.helpers import (
     convert_prices_to_time_format,
     get_intersecting_arrays,
+    metagraph_refresh_due,
     round_time_to_minutes,
     from_iso_to_unix_time,
     get_current_time,
@@ -138,4 +139,23 @@ class TestHelpers(unittest.TestCase):
 
         self.assertEqual(
             from_iso_to_unix_time("2025-08-05T14:56:00+00:00"), 1754405760
+        )
+
+    def test_metagraph_refresh_due(self):
+        now = datetime(2026, 7, 9, 12, 0, tzinfo=timezone.utc)
+
+        # never refreshed -> due
+        self.assertTrue(metagraph_refresh_due(None, now, 15))
+
+        # refreshed less than the interval ago -> not due
+        self.assertFalse(
+            metagraph_refresh_due(now - timedelta(minutes=14), now, 15)
+        )
+
+        # exactly the interval ago (or more) -> due
+        self.assertTrue(
+            metagraph_refresh_due(now - timedelta(minutes=15), now, 15)
+        )
+        self.assertTrue(
+            metagraph_refresh_due(now - timedelta(hours=2), now, 60)
         )
