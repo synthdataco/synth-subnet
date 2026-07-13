@@ -109,16 +109,6 @@ class BaseNeuron(ABC):
         reraise=True,
     )
     def _initial_metagraph_fetch(self) -> MetagraphMixin:
-        """First full metagraph sync of the process.
-
-        The public chain endpoints rate-limit the heavy metagraph runtime
-        call per source IP (the websocket handshake is rejected with
-        HTTP 429). When several neurons (re)start at once behind one IP,
-        an unretried fetch crashes the process and the synchronized
-        restarts keep re-triggering the limit. Jittered exponential
-        backoff waits out the burst in-process and desynchronizes the
-        callers instead.
-        """
         return self.subtensor.metagraph(self.config.netuid)
 
     @abstractmethod
