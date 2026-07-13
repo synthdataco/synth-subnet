@@ -9,6 +9,7 @@ class PromptConfig:
     time_increment: int
     cycle_interval_minutes: int
     timeout_extra_seconds: int
+    cycle_offset_minutes: int | None = None
     num_simulations: int = 1000
     data_retention_days: int = 30
     # Density tapering: predictions on validator_requests whose start_time is

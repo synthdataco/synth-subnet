@@ -118,18 +118,17 @@ class Validator(BaseValidatorNeuron):
             )
             self.cycle_name = self.config.validator.cycle_name
 
-        self._apply_assets_filter()
+        self._apply_cycle_overrides()
 
-    def _apply_assets_filter(self):
-        """Narrow the active cycle's asset_list to --validator.assets, if set.
+    def _apply_cycle_overrides(self):
+        """Apply the per-process CLI overrides to the active cycle's
+        PromptConfig: narrow asset_list to --validator.assets and anchor
+        the schedule to a wall-clock lane (--validator.cycle_offset_minutes).
 
-        No-op for the scoring cycle or when the flag is unset. Raises
-        ValueError on assets not in the active cycle's asset_list.
+        No-op for the scoring cycle or when the flags are unset. Raises
+        ValueError on assets not in the active cycle's asset_list, or an
+        offset outside [0, cycle_interval_minutes).
         """
-        assets_filter = self.config.validator.assets
-        if assets_filter == "":
-            return
-
         if self.cycle_name == CYCLE_LOW_FREQUENCY:
             target_config: PromptConfig = LOW_FREQUENCY
         elif self.cycle_name == CYCLE_HIGH_FREQUENCY:
@@ -137,21 +136,40 @@ class Validator(BaseValidatorNeuron):
         else:
             return
 
-        requested = [a.strip() for a in assets_filter.split(",") if a.strip()]
-        unknown = set(requested) - set(target_config.asset_list)
-        if unknown:
-            raise ValueError(
-                f"--validator.assets contains unknown assets {sorted(unknown)} "
-                f"for {target_config.label}-frequency cycle. "
-                f"Valid: {target_config.asset_list}"
+        assets_filter = self.config.validator.assets
+        if assets_filter != "":
+            requested = [
+                a.strip() for a in assets_filter.split(",") if a.strip()
+            ]
+            unknown = set(requested) - set(target_config.asset_list)
+            if unknown:
+                raise ValueError(
+                    f"--validator.assets contains unknown assets "
+                    f"{sorted(unknown)} for {target_config.label}-frequency "
+                    f"cycle. Valid: {target_config.asset_list}"
+                )
+            target_config.asset_list = [
+                a for a in target_config.asset_list if a in requested
+            ]
+            bt.logging.info(
+                f"Restricting {target_config.label}-frequency cycle to "
+                f"assets: {target_config.asset_list}"
             )
-        target_config.asset_list = [
-            a for a in target_config.asset_list if a in requested
-        ]
-        bt.logging.info(
-            f"Restricting {target_config.label}-frequency cycle to assets: "
-            f"{target_config.asset_list}"
-        )
+
+        offset = self.config.validator.cycle_offset_minutes
+        if offset is not None:
+            if not 0 <= offset < target_config.cycle_interval_minutes:
+                raise ValueError(
+                    f"--validator.cycle_offset_minutes {offset} must be in "
+                    f"[0, {target_config.cycle_interval_minutes}) for the "
+                    f"{target_config.label}-frequency cycle"
+                )
+            target_config.cycle_offset_minutes = offset
+            bt.logging.info(
+                f"Anchoring {target_config.label}-frequency cycle to "
+                f"wall-clock lane {offset} "
+                f"(mod {target_config.cycle_interval_minutes})"
+            )
 
     def forward_validator(self):
         """Boot metagraph refresh, then run this process's cycle forever."""

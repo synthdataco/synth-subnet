@@ -224,6 +224,12 @@ def add_validator_args(_, parser: argparse.ArgumentParser):
     )
 
     parser.add_argument(
+        "--validator.cycle_offset_minutes",
+        type=int,
+        default=None,
+    )
+
+    parser.add_argument(
         "--validator.mode",
         type=str,
         help="Full mode will keep all history, light mode will prune old predictions.",
