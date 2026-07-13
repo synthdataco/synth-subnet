@@ -66,6 +66,12 @@ class SequentialScheduler:
         prompt_config: PromptConfig,
         first_run: bool = False,
     ) -> int:
+        offset = prompt_config.cycle_offset_minutes
+        if offset is not None:
+            return SequentialScheduler.select_grid_delay(
+                cycle_start_time, prompt_config, offset, first_run
+            )
+
         next_cycle = cycle_start_time
         next_cycle = round_time_to_minutes(next_cycle)
         if not first_run:
@@ -82,6 +88,34 @@ class SequentialScheduler:
             delay = int(diff.total_seconds())
 
         return delay
+
+    @staticmethod
+    def select_grid_delay(
+        cycle_start_time: datetime,
+        prompt_config: PromptConfig,
+        offset: int,
+        first_run: bool = False,
+    ) -> int:
+        """Delay until the next minute boundary T where
+        minutes-since-epoch(T) % cycle_interval_minutes == offset.
+        """
+        interval = prompt_config.cycle_interval_minutes
+
+        now = get_current_time()
+        next_boundary = round_time_to_minutes(now)
+        boundary_minutes = int(next_boundary.timestamp()) // 60
+        next_cycle = next_boundary + timedelta(
+            minutes=(offset - boundary_minutes) % interval
+        )
+
+        if not first_run and next_cycle - cycle_start_time > timedelta(
+            minutes=interval
+        ):
+            bt.logging.warning(
+                "Cycle overran its slot, skipping to the next one in its lane"
+            )
+
+        return int((next_cycle - now).total_seconds())
 
     @staticmethod
     def select_asset(latest_asset: str | None, asset_list: list[str]) -> str:
