@@ -190,7 +190,7 @@ pm2 start miner.config.js -- --logging.trace
 
 #### `--netuid INTEGER`
 
-The netuid (network unique identifier) of the subnet within the root network, (e.g. 247).
+The netuid (network unique identifier) of the subnet within the root network: `50` on mainnet, `247` on testnet. The examples below use the testnet value.
 
 Example:
 
@@ -586,11 +586,11 @@ Visit the Synth Miner Dashboard: [https://synthdata.co/miners/performance](https
 
 #### 2. How long do I have to wait for my new miner to get the first CRPS score?
 
-Assuming your setup is correct, and you're submitting predictions, it takes approximately 25–27 hours for your first score to appear. This is because the CRPS is calculated based on the actual price 24 hours after the prediction.
+Assuming your setup is correct, and you're submitting predictions, it depends on the competition: the CRPS is calculated against the actual prices over the prediction horizon, so a `crypto-1h` prediction gets its first score roughly 1–2 hours after submission, while `crypto-24h` and `com-equ-24h` predictions take approximately 25–27 hours.
 
 #### 3. What does it mean when I check [https://api.synthdata.co/validation/miner?uid=](https://api.synthdata.co/validation/miner?uid=) and see: `{"validated":false,"reason":"Number of time points is incorrect: expected 289, got 288","response_time":"4.07"}`?
 
-It means your submission has the wrong number of time points. You should be submitting exactly 289 points for that prompt.
+It means your submission has the wrong number of time points. The expected count depends on the prompt's competition (see FAQ #5): 289 points for the 24h competitions, 61 for `crypto-1h`. The error message always tells you the count expected for that prompt.
 
 #### 4. Why does my miner keep getting a CRPS score of -1?
 
@@ -607,6 +607,14 @@ A prediction is considered valid if it meets all the following conditions:
 ```python
 expected_time_points = (time_length / time_increment) + 1
 ```
+
+Per competition (see the [competition table in the README](../README.md#12-task-presented-to-the-miners) for the asset lists):
+
+| Competition   | `time_length` | `time_increment` | points per path |
+| ------------- | ------------- | ---------------- | --------------- |
+| `crypto-1h`   | 3600s         | 60s              | 61              |
+| `crypto-24h`  | 86400s        | 300s             | 289             |
+| `com-equ-24h` | 86400s        | 300s             | 289             |
 
 The expected format is as follows:
 
@@ -666,6 +674,8 @@ Synth regularly publishes detailed miner performance reviews highlighting the st
 
 Explore them here: [https://synthdata.co/research](https://synthdata.co/research)
 
+You can also use the backtester (FAQ #13) to measure whether a model change improves your rank.
+
 #### 8. Do I need to run multiple miners?
 
 If you're using the same model per asset, no — rewards will be the same. If you're using different models, then yes, it's encouraged to experiment and find what works best.
@@ -697,6 +707,12 @@ Modify this function:
 [simulations.py#L25](https://github.com/synthdataco/synth-subnet/blob/main/synth/miner/simulations.py#L25)
 
 Take into account all prompt parameters except sigma, which you may ignore.
+
+#### 13. Can I test my model's accuracy without deploying to mainnet?
+
+Yes — the open-source [synth-lib backtester](https://github.com/synthdataco/synth-lib) scores your prediction files with the same CRPS / smoothed-score / reward-weight logic the live validator runs, against real historical prices, and charts your rank evolution, CRPS distribution, and estimated earnings per competition. See the [synth-lib README](https://github.com/synthdataco/synth-lib#2-run-a-backtest) for the full guide and its [known caveats](https://github.com/synthdataco/synth-lib#known-caveats) for the earliest supported backtest window.
+
+For a live end-to-end rehearsal of the network plumbing, also run a miner on testnet (FAQ #11).
 
 <sup>[Back to top ^][table-of-contents]</sup>
 
