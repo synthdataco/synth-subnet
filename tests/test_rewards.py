@@ -45,13 +45,15 @@ def test_compute_softmax_2():
 
 def test_compute_prompt_scores():
     crps_scores = np.array([1000, 1500, 2000, -1])
-    expected_prompt_scores = np.array([0, 500, 900, 900])
+    # Valid scores are not capped; the miss (-1) is filled with the 95th
+    # percentile of the valid scores (1950), then shifted by the minimum.
+    expected_prompt_scores = np.array([0, 500, 1000, 950])
 
-    actual_score, percentile90, lowest_score = compute_prompt_scores(
+    actual_score, percentile95, lowest_score = compute_prompt_scores(
         crps_scores
     )
 
-    assert percentile90 == 1900.0
+    assert percentile95 == 1950.0
     assert lowest_score == 1000
     assert np.array_equal(actual_score, expected_prompt_scores)
 
@@ -62,11 +64,11 @@ def test_compute_prompt_scores_only_one_miner():
         [0, 0, 0, 0]
     )  # TODO: not ideal but it's the current behavior
 
-    actual_score, percentile90, lowest_score = compute_prompt_scores(
+    actual_score, percentile95, lowest_score = compute_prompt_scores(
         crps_scores
     )
 
-    assert percentile90 == 1000
+    assert percentile95 == 1000
     assert lowest_score == 1000
     assert np.array_equal(actual_score, expected_prompt_scores)
 
@@ -94,21 +96,25 @@ def test_get_rewards(db_engine):
 
     assert prompt_scores is not None
 
-    percentile90 = detailed_info[0]["percentile90"]
+    percentile95 = detailed_info[0]["percentile95"]
 
-    # find the lowest crps value
-    crps_values = [item["total_crps"] for item in detailed_info]
-    lowest_crps = float("inf")
-    for crps in crps_values:
-        # -1 is an invalid prediction
-        if crps < lowest_crps and crps != -1:
-            lowest_crps = crps
+    # find the lowest and highest valid crps values (-1 is invalid)
+    valid_crps = [
+        item["total_crps"]
+        for item in detailed_info
+        if item["total_crps"] != -1
+    ]
+    lowest_crps = min(valid_crps)
+    highest_crps = max(valid_crps)
 
     assert len(prompt_scores) == len(miner_uids)
     assert min(prompt_scores) == 0
 
-    # the max score is the percentile90 - lowest_crps
-    assert max(prompt_scores) == percentile90 - lowest_crps
+    # valid scores are uncapped: the max score is the highest valid crps
+    # minus the lowest (misses are filled with percentile95, which never
+    # exceeds the highest valid crps)
+    assert max(prompt_scores) == highest_crps - lowest_crps
+    assert percentile95 <= highest_crps
 
     assert detailed_info[0]["miner_uid"] == miner_uids[0]
     crps_data = detailed_info[0]["crps_data"]

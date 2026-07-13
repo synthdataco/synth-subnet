@@ -47,7 +47,7 @@ def _make_scores_df(
     times: list[datetime],
     assets: list[str] | None = None,
     scores: list[float] | None = None,
-    percentile90: float = 0.01,
+    percentile95: float = 0.01,
     lowest_score: float = 0.0,
     sparse_entries: list[tuple[int, int]] | None = None,
 ) -> pd.DataFrame:
@@ -69,7 +69,7 @@ def _make_scores_df(
                     "prompt_score_v3": score,
                     "scored_time": t,
                     "asset": asset,
-                    "percentile90": percentile90,
+                    "percentile95": percentile95,
                     "lowest_score": lowest_score,
                 }
             )
@@ -84,7 +84,7 @@ def _make_scores_df(
                         "prompt_score_v3": score,
                         "scored_time": t,
                         "asset": asset,
-                        "percentile90": percentile90,
+                        "percentile95": percentile95,
                         "lowest_score": lowest_score,
                     }
                 )
@@ -155,7 +155,7 @@ class TestPrepareDfForMovingAverage:
         miner2 = result[result["miner_id"] == 2].sort_values("scored_time")
         assert len(miner2) == 3  # present at all 3 times now
 
-        # Backfilled scores should be percentile90 - lowest_score = 0.01 - 0.0 = 0.01
+        # Backfilled scores should be percentile95 - lowest_score = 0.01 - 0.0 = 0.01
         backfilled = miner2[miner2["scored_time"] < _ts(120)]
         assert len(backfilled) == 2
         for _, row in backfilled.iterrows():
@@ -234,7 +234,7 @@ class TestPrepareDfForMovingAverage:
                 "prompt_score_v3": 0.01,
                 "scored_time": t,
                 "asset": "BTC",
-                "percentile90": 0.02,
+                "percentile95": 0.02,
                 "lowest_score": 0.0,
             },
             {
@@ -242,7 +242,7 @@ class TestPrepareDfForMovingAverage:
                 "prompt_score_v3": 0.02,
                 "scored_time": t,
                 "asset": "ETH",
-                "percentile90": 0.02,
+                "percentile95": 0.02,
                 "lowest_score": 0.0,
             },
         ]
@@ -274,7 +274,7 @@ class TestPrepareDfForMovingAverage:
         assert miner2_at_t1.iloc[0]["prompt_score_v3"] == pytest.approx(0.003)
 
     def test_none_percentile_skips_backfill(self):
-        """If percentile90 or lowest_score is None, that time is skipped for backfill."""
+        """If percentile95 or lowest_score is None, that time is skipped for backfill."""
         times = [_ts(0), _ts(60)]
         miner_ids = [1, 2]
         entries = [(0, 0), (0, 1), (1, 1)]
@@ -285,8 +285,8 @@ class TestPrepareDfForMovingAverage:
             scores=[0.005],
             sparse_entries=entries,
         )
-        # Set percentile90 to None for t=0
-        df.loc[df["scored_time"] == times[0], "percentile90"] = None
+        # Set percentile95 to None for t=0
+        df.loc[df["scored_time"] == times[0], "percentile95"] = None
 
         result = prepare_df_for_moving_average(df)
         miner2_backfilled = result[
@@ -399,7 +399,7 @@ class TestComputeSmoothedScore:
                     "prompt_score_v3": score_vals[ti],
                     "scored_time": t,
                     "asset": "BTC",
-                    "percentile90": 0.01,
+                    "percentile95": 0.01,
                     "lowest_score": 0.0,
                 }
             )
@@ -409,7 +409,7 @@ class TestComputeSmoothedScore:
                     "prompt_score_v3": 0.003,
                     "scored_time": t,
                     "asset": "BTC",
-                    "percentile90": 0.01,
+                    "percentile95": 0.01,
                     "lowest_score": 0.0,
                 }
             )
@@ -488,7 +488,7 @@ class TestComputeSmoothedScore:
                     "prompt_score_v3": 0.001,
                     "scored_time": t,
                     "asset": "BTC",
-                    "percentile90": 0.01,
+                    "percentile95": 0.01,
                     "lowest_score": 0.0,
                 }
             )
@@ -498,7 +498,7 @@ class TestComputeSmoothedScore:
                     "prompt_score_v3": 0.009,
                     "scored_time": t,
                     "asset": "BTC",
-                    "percentile90": 0.01,
+                    "percentile95": 0.01,
                     "lowest_score": 0.0,
                 }
             )
@@ -577,7 +577,7 @@ class TestComputeSmoothedScore:
                 "prompt_score_v3": 0.01,
                 "scored_time": t,
                 "asset": "BTC",
-                "percentile90": 0.02,
+                "percentile95": 0.02,
                 "lowest_score": 0.0,
             },
             {
@@ -585,7 +585,7 @@ class TestComputeSmoothedScore:
                 "prompt_score_v3": 0.01,
                 "scored_time": t,
                 "asset": "XAU",
-                "percentile90": 0.02,
+                "percentile95": 0.02,
                 "lowest_score": 0.0,
             },
         ]
@@ -644,7 +644,7 @@ class TestNumericalEquivalence:
                         "prompt_score_v3": 0.001 * mid,
                         "scored_time": t,
                         "asset": "BTC",
-                        "percentile90": 0.01,
+                        "percentile95": 0.01,
                         "lowest_score": 0.0,
                     }
                 )
@@ -681,7 +681,7 @@ class TestNumericalEquivalence:
                         "prompt_score_v3": 0.002 * mid + 0.001 * ti,
                         "scored_time": t,
                         "asset": assets[ti],
-                        "percentile90": 0.02,
+                        "percentile95": 0.02,
                         "lowest_score": 0.0,
                     }
                 )
@@ -735,7 +735,7 @@ class TestNumericalEquivalence:
                         "prompt_score_v3": min(score, 0.15),
                         "scored_time": t,
                         "asset": asset,
-                        "percentile90": 0.01,
+                        "percentile95": 0.01,
                         "lowest_score": 0.0,
                     }
                 )
@@ -943,7 +943,7 @@ class TestRealisticData:
                         "prompt_score_v3": score,
                         "scored_time": t,
                         "asset": asset,
-                        "percentile90": p90,
+                        "percentile95": p90,
                         "lowest_score": low,
                     }
                 )
@@ -1003,7 +1003,7 @@ class TestRealisticData:
                     "prompt_score_v3": 0.0,
                     "scored_time": t,
                     "asset": "BTC",
-                    "percentile90": 0.01,
+                    "percentile95": 0.01,
                     "lowest_score": 0.0,
                 }
             )
@@ -1014,7 +1014,7 @@ class TestRealisticData:
                     "prompt_score_v3": 0.005,
                     "scored_time": t,
                     "asset": "BTC",
-                    "percentile90": 0.01,
+                    "percentile95": 0.01,
                     "lowest_score": 0.0,
                 }
             )
@@ -1025,7 +1025,7 @@ class TestRealisticData:
                     "prompt_score_v3": 0.01,
                     "scored_time": t,
                     "asset": "BTC",
-                    "percentile90": 0.01,
+                    "percentile95": 0.01,
                     "lowest_score": 0.0,
                 }
             )
@@ -1082,7 +1082,7 @@ class TestRealisticData:
                     "prompt_score_v3": 0.01,
                     "scored_time": _ts(i * 60),
                     "asset": asset,
-                    "percentile90": 0.02,
+                    "percentile95": 0.02,
                     "lowest_score": 0.0,
                 }
             )
@@ -1113,7 +1113,7 @@ class TestRealisticData:
                     "prompt_score_v3": 0.003,
                     "scored_time": last_time,
                     "asset": "BTC",
-                    "percentile90": 0.01,
+                    "percentile95": 0.01,
                     "lowest_score": 0.0,
                 }
             ]
@@ -1151,7 +1151,7 @@ class TestRealisticData:
 
     def test_existing_test_csv_compatible(self):
         """Run prepare + compute on the real cutoff_data_4_days.csv shape."""
-        # Simulate the CSV shape: no percentile90/lowest_score columns
+        # Simulate the CSV shape: no percentile95/lowest_score columns
         # (they get added by get_miner_scores after the merge)
         import os
 
@@ -1165,9 +1165,9 @@ class TestRealisticData:
         df = pd.read_csv(csv_path)
         df["scored_time"] = pd.to_datetime(df["scored_time"])
 
-        # The real CSV doesn't have percentile90/lowest_score — add them
+        # The real CSV doesn't have percentile95/lowest_score — add them
         # to simulate what get_miner_scores returns
-        df["percentile90"] = 0.01
+        df["percentile95"] = 0.01
         df["lowest_score"] = 0.0
 
         prepared = prepare_df_for_moving_average(df)

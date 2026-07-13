@@ -324,7 +324,7 @@ class MinerDataHandler:
                                 ],
                                 "score_details_v3": {
                                     "total_crps": row["total_crps"],
-                                    "percentile90": row["percentile90"],
+                                    "percentile95": row["percentile95"],
                                     "lowest_score": row["lowest_score"],
                                     "prompt_score_v3": row["prompt_score_v3"],
                                     "crps_data": row["crps_data"],
@@ -682,8 +682,13 @@ class MinerDataHandler:
                         ms.prompt_score_v3,
                         ms.scored_time,
                         vr.asset,
-                        first_value((ms.score_details_v3->>'percentile90')::float)
-                            OVER (PARTITION BY ms.scored_time ORDER BY ms.id) AS percentile90,
+                        -- percentile90 fallback: rows written before the
+                        -- p95-on-miss change; drop it once those are older
+                        -- than the largest window_days.
+                        first_value(COALESCE(
+                                (ms.score_details_v3->>'percentile95')::float,
+                                (ms.score_details_v3->>'percentile90')::float))
+                            OVER (PARTITION BY ms.scored_time ORDER BY ms.id) AS percentile95,
                         first_value((ms.score_details_v3->>'lowest_score')::float)
                             OVER (PARTITION BY ms.scored_time ORDER BY ms.id) AS lowest_score
                     FROM miner_scores ms

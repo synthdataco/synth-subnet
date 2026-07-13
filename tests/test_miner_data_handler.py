@@ -3,7 +3,7 @@ import hashlib
 import os
 
 import pytest
-from sqlalchemy import Engine, select, delete
+from sqlalchemy import Engine, select, delete, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -406,7 +406,33 @@ def test_set_get_scores(db_engine: Engine):
         asset_list=["BTC"],
     )
 
-    print("miner_scores_df", miner_scores_df)
+    assert not miner_scores_df.empty
+    assert miner_scores_df["percentile95"].notna().all()
+    expected_percentile95 = detailed_info[0]["percentile95"]
+    assert (miner_scores_df["percentile95"] == expected_percentile95).all()
+
+    # Transition regression: rows written before the p95-on-miss change
+    # carry the old 'percentile90' JSON key; the COALESCE fallback in
+    # get_miner_scores must still surface them as percentile95.
+    with db_engine.connect() as connection:
+        with connection.begin():
+            connection.execute(text("""
+                    UPDATE miner_scores
+                    SET score_details_v3 = (score_details_v3 - 'percentile95')
+                        || jsonb_build_object(
+                            'percentile90',
+                            score_details_v3->'percentile95')
+                    """))
+
+    old_key_df = handler.get_miner_scores(
+        scored_time=scored_time,
+        window_days=4,
+        time_length=86400,
+        asset_list=["BTC"],
+    )
+
+    assert not old_key_df.empty
+    assert (old_key_df["percentile95"] == expected_percentile95).all()
 
 
 def test_insert_new_miners(db_engine: Engine):
@@ -509,7 +535,7 @@ def test_set_miner_scores_upsert_preserves_individual_values(
                 "miner_uid": i,
                 "miner_prediction_id": pred.id,
                 "total_crps": scores[i % len(scores)],
-                "percentile90": 1.0,
+                "percentile95": 1.0,
                 "lowest_score": 0.01,
                 "prompt_score_v3": scores[i % len(scores)],
                 "crps_data": [{"crps": scores[i % len(scores)]}],
@@ -531,7 +557,7 @@ def test_set_miner_scores_upsert_preserves_individual_values(
                 "miner_uid": i,
                 "miner_prediction_id": pred.id,
                 "total_crps": updated_scores[i % len(updated_scores)],
-                "percentile90": 2.0,
+                "percentile95": 2.0,
                 "lowest_score": 0.02,
                 "prompt_score_v3": updated_scores[i % len(updated_scores)],
                 "crps_data": [

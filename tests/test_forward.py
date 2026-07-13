@@ -386,7 +386,7 @@ def _seed_competition_scores(engine, comp, miner_ids, scores, scored_time):
                         prompt_score_v3=score,
                         score_details={},
                         score_details_v3={
-                            "percentile90": 0.01,
+                            "percentile95": 0.01,
                             "lowest_score": 0.0,
                         },
                     )
