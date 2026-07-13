@@ -6,13 +6,14 @@
 - [2. TL;DR](#2-tldr)
   - [2.1. Clone the code and implement your model](#21-clone-the-code-and-implement-your-model)
   - [2.2. Check that your model generates a valid response](#22-check-that-your-model-generates-a-valid-response)
-  - [2.3. Get a VM and open port `8091`](#23-get-a-vm-and-open-port-8091)
-  - [2.4. Create or import a Bittensor wallet](#24-create-or-import-a-bittensor-wallet)
-  - [2.5. Launch your miner with PM2](#25-launch-your-miner-with-pm2)
-  - [2.6. Verify the port is open](#26-verify-the-port-is-open)
-  - [2.7. Track your miner performance](#27-track-your-miner-performance)
-  - [2.8. Check your prediction validation](#28-check-your-prediction-validation)
-  - [2.9. More information](#29-more-information)
+  - [2.3. Backtest your model](#23-backtest-your-model)
+  - [2.4. Get a VM and open port `8091`](#24-get-a-vm-and-open-port-8091)
+  - [2.5. Create or import a Bittensor wallet](#25-create-or-import-a-bittensor-wallet)
+  - [2.6. Launch your miner with PM2](#26-launch-your-miner-with-pm2)
+  - [2.7. Verify the port is open](#27-verify-the-port-is-open)
+  - [2.8. Track your miner performance](#28-track-your-miner-performance)
+  - [2.9. Check your prediction validation](#29-check-your-prediction-validation)
+  - [2.10. More information](#210-more-information)
 - [3. Getting started](#3-getting-started)
   - [3.1. Open ports](#31-open-ports)
     - [3.1.1. Check open ports](#311-check-open-ports)
@@ -45,6 +46,8 @@
 ### 2.1. Clone the code and implement your model
 
 - Clone the Synth subnet repository.
+- Know what you are asked to predict: the subnet runs **three competitions** — `crypto-1h`, `crypto-24h`, and `com-equ-24h` — with different assets, horizons, and points per path. See the [competition table in the README](../README.md#12-task-presented-to-the-miners) before writing your model.
+- The exact response format (paths array, points per path, price precision) is specified in the [miner reference FAQ](./miner_reference.md#2-appendix).
 - Modify the implementation of this function to run your own model: [simulations.py#L25](https://github.com/synthdataco/synth-subnet/blob/main/synth/miner/simulations.py#L25)
 - Use all parameters from the prompt **except** `sigma`, which you may ignore.
 
@@ -59,22 +62,39 @@ python synth/miner/run.py
 - If your format is correct, you’ll see the output:
 
 ```text
-$ CORRECT
+start_time <timestamp>
+CORRECT
 ```
 
-### 2.3. Get a VM and open port `8091`
+> ⚠️ `run.py` exercises a single BTC / 24h prompt with 100 paths. A passing check does not cover the `crypto-1h` shape (61 points per path) or the 1,000 paths requested in production — see the [miner reference FAQ](./miner_reference.md#2-appendix) for the per-competition parameters.
+
+### 2.3. Backtest your model
+
+The open-source [synth-lib](https://github.com/synthdataco/synth-lib) backtester lets you measure how your model would actually **score**: it reads your prediction files and replays the live validator's own logic — CRPS per prompt, smoothed scores, reward weights, and rank — against real historical prices, then charts your rank evolution, CRPS distribution, and estimated earnings per competition.
+
+```shell
+git clone https://github.com/synthdataco/synth-lib.git
+cd synth-lib && uv sync
+uv run synth_lib/backtester/scripts/run_backtest.py --miner-name my_model --competition crypto-24h --asset BTC
+```
+
+- Full guide (prediction file format, CLI flags, Python API, chart outputs): [synth-lib README](https://github.com/synthdataco/synth-lib#2-run-a-backtest).
+- Mind the earliest supported backtest window — see [Known caveats](https://github.com/synthdataco/synth-lib#known-caveats).
+- For a live end-to-end rehearsal of the network plumbing, you can also run a miner on **testnet** (netuid `247`) — see [3.4.2. Register the wallet](#342-register-the-wallet).
+
+### 2.4. Get a VM and open port `8091`
 
 - Ensure port **8091** is open in your cloud provider's **ingress rules**.
 - Configure your VM's **firewall** to allow inbound traffic on this port.
 
-### 2.4. Create or import a Bittensor wallet
+### 2.5. Create or import a Bittensor wallet
 
 - Use `btcli` to:
   - Create or import a wallet.
   - Add funds.
   - Register your hotkey (this will purchase a UID).
 
-### 2.5. Launch your miner with PM2
+### 2.6. Launch your miner with PM2
 
 - Create a new file called `miner.local.config.js` using the config from this link: [miner.config.js#L1](https://github.com/synthdataco/synth-subnet/blob/main/miner.config.js#L1)
 - Modify the wallet name and hotkey name as needed.
@@ -84,20 +104,20 @@ $ CORRECT
 pm2 start miner.local.config.js
 ```
 
-### 2.6. Verify the port is open
+### 2.7. Verify the port is open
 
 - Your port will only be accessible if:
   - The miner is actively running.
   - Port 8091 is open on the VM and network level.
 - You can verify using this tool: [https://www.yougetsignal.com/tools/open-ports](https://www.yougetsignal.com/tools/open-ports).
 
-### 2.7. Track your miner performance
+### 2.8. Track your miner performance
 
 - View miner performance and stats on:
   - [Taostats (Subnet 50)](https://taostats.io/subnets/50/metagraph)
   - [Synth Miner Dashboard](https://synthdata.co/miners/performance/)
 
-### 2.8. Check your prediction validation
+### 2.9. Check your prediction validation
 
 - View validation status of your last submission:
 
@@ -105,7 +125,7 @@ pm2 start miner.local.config.js
 https://api.synthdata.co/validation/miner?uid=<your UID>
 ```
 
-### 2.9. More information
+### 2.10. More information
 
 - Explore the full Synth API documentation: [https://api.synthdata.co](https://api.synthdata.co)
 
@@ -228,19 +248,11 @@ Install rust:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Add the required `apt` repositories:
-
-```shell
-sudo add-apt-repository ppa:deadsnakes/ppa
-```
-
-> ⚠️ **NOTE:** The [deadsnakes](https://github.com/deadsnakes) repository, while unofficial, it is hugely popular and used by many Python projects.
-
-Install Python and Node/npm:
+Install Node/npm and build tooling (Python itself is provisioned by `uv` in [3.3.3](#333-set-up--activate-python-virtual-environment)):
 
 ```shell
 sudo apt update && \
-  sudo apt install nodejs npm python3.11 python3.11-venv pkg-config
+  sudo apt install nodejs npm pkg-config
 ```
 
 Install [PM2](https://pm2.io/) via npm:
@@ -365,18 +377,20 @@ btcli subnet metagraph \
 
 ### 3.5. Run the miner
 
+> 💡 **TIP:** You can [backtest your model](#23-backtest-your-model) to estimate the rank and earnings it would achieve.
+
 #### 3.5.1. Start the miner
 
-Simply start PM2 with the miner config:
+Create your local copy of the PM2 config (as in [2.6](#26-launch-your-miner-with-pm2), adjusting the wallet and hotkey names), then start it:
 
 ```shell
-pm2 start miner.config.js
+pm2 start miner.local.config.js
 ```
 
-for testnet use:
+for testnet, base your local copy on `miner.test.config.js` instead:
 
 ```shell
-pm2 start miner.test.config.js
+pm2 start miner.test.local.config.js
 ```
 
 <sup>[Back to top ^][table-of-contents]</sup>

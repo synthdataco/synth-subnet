@@ -49,6 +49,7 @@
     - [2.1.1. Tutorial](#211-tutorial)
     - [2.1.2. Reference](#212-reference)
     - [2.1.3. Automated Deployment](#213-automated-deployment)
+    - [2.1.4. Backtesting](#214-backtesting)
   - [2.2. Validators](#22-validators)
   - [2.3. Develop](#23-develop)
 - [3. License](#-3-license)
@@ -303,6 +304,14 @@ uv sync && source .venv/bin/activate
 python synth/miner/run.py # prints "CORRECT" if the dummy model's output format is valid
 ```
 
+You can also benchmark your model's **accuracy** with the open-source [synth-lib backtester](https://github.com/synthdataco/synth-lib), which replays the real validator scoring (CRPS, smoothed scores, rank, estimated earnings) against historical market data:
+
+```shell
+git clone https://github.com/synthdataco/synth-lib.git
+cd synth-lib && uv sync
+uv run synth_lib/backtester/scripts/run_backtest.py --miner-name my_model --competition crypto-24h --asset BTC
+```
+
 From there, follow the [miner tutorial](./docs/miner_tutorial.md) to plug in your own model, register a Bittensor wallet, and launch the miner under PM2. Validators should jump straight to the [validator guide](./docs/validator_guide.md).
 
 <sup>[Back to top ^][table-of-contents]</sup>
@@ -330,6 +339,12 @@ For a one-command miner setup, see the [miner-setup](./miner-setup/) guide. It p
 - **Terraform** — provision a cloud VM (GCP or AWS) with everything pre-installed
 - **Docker** — run the miner in a container on any machine
 - **Ansible** — install all dependencies on an existing VM
+
+<sup>[Back to top ^][table-of-contents]</sup>
+
+#### 2.1.4. Backtesting
+
+The [synth-lib](https://github.com/synthdataco/synth-lib) backtester scores your prediction files with the same CRPS / smoothed-score / reward-weight logic the live validator runs, and charts your projected rank and earnings over a historical window. See [Backtest your model](./docs/miner_tutorial.md#23-backtest-your-model) in the tutorial and the [synth-lib README](https://github.com/synthdataco/synth-lib#2-run-a-backtest) for the full guide.
 
 <sup>[Back to top ^][table-of-contents]</sup>
 
