@@ -19,6 +19,11 @@ import copy
 
 import bittensor as bt
 from bittensor.core.metagraph import MetagraphMixin
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from abc import ABC, abstractmethod
 
@@ -80,7 +85,7 @@ class BaseNeuron(ABC):
         # The wallet holds the cryptographic key pairs for the miner.
         self.wallet = bt.Wallet(config=self.config)
         self.subtensor = bt.Subtensor(config=self.config)
-        self.metagraph = self.subtensor.metagraph(self.config.netuid)
+        self.metagraph = self._initial_metagraph_fetch()
 
         bt.logging.info(f"Wallet: {self.wallet}")
         bt.logging.info(f"Subtensor: {self.subtensor}")
@@ -97,6 +102,24 @@ class BaseNeuron(ABC):
             f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}"
         )
         self.step = 0
+
+    @retry(
+        stop=stop_after_attempt(10),
+        wait=wait_random_exponential(multiplier=2, max=120),
+        reraise=True,
+    )
+    def _initial_metagraph_fetch(self) -> MetagraphMixin:
+        """First full metagraph sync of the process.
+
+        The public chain endpoints rate-limit the heavy metagraph runtime
+        call per source IP (the websocket handshake is rejected with
+        HTTP 429). When several neurons (re)start at once behind one IP,
+        an unretried fetch crashes the process and the synchronized
+        restarts keep re-triggering the limit. Jittered exponential
+        backoff waits out the burst in-process and desynchronizes the
+        callers instead.
+        """
+        return self.subtensor.metagraph(self.config.netuid)
 
     @abstractmethod
     async def forward_miner(self, synapse: bt.Synapse) -> bt.Synapse: ...

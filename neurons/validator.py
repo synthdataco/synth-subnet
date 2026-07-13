@@ -209,17 +209,31 @@ class Validator(BaseValidatorNeuron):
         An empty result (degenerate chain response) is applied — the shared
         metagraph object was just emptied by the sync, so stale uids must
         not outlive it — but not stamped, so the next cycle retries.
+
+        A sync that raises (e.g. the chain endpoint rate-limiting with
+        HTTP 429) is swallowed: the previous miner set stays in use and,
+        because the timer is not stamped, the next cycle retries. This
+        keeps a transient chain outage from killing the process — the
+        boot call and the scoring loop have no other safety net.
         """
         now = get_current_time()
         if not metagraph_refresh_due(
             self.last_metagraph_refresh_at, now, interval_minutes
         ):
             return
-        self.miner_uids = get_available_miners_and_update_metagraph_history(
-            base_neuron=self,
-            miner_data_handler=self.miner_data_handler,
-            save_snapshot=self.cycle_name == CYCLE_SCORING,
-        )
+        try:
+            self.miner_uids = (
+                get_available_miners_and_update_metagraph_history(
+                    base_neuron=self,
+                    miner_data_handler=self.miner_data_handler,
+                    save_snapshot=self.cycle_name == CYCLE_SCORING,
+                )
+            )
+        except Exception:
+            bt.logging.exception(
+                "Metagraph refresh failed; keeping the previous miner set"
+            )
+            return
         if self.miner_uids:
             self.last_metagraph_refresh_at = now
 
