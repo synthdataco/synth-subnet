@@ -632,12 +632,12 @@ where
 
 - the first element is the timestamp of the start time of the prompt,
 - second is the time increment of the prompt,
-- then arrays of prices with no more than 8 digits per point. Otherwise, the validator will reject the submission.
-  - validation error message: `Price format is incorrect: too many digits`
+- then arrays of prices, where each point must be a finite number (no `NaN`/`Infinity`, no booleans) with at most 8 significant digits — magnitude and sign don't matter, e.g. `12345678.0`, `0.00012345678` and `1.2345e20` are all valid. Otherwise, the validator will reject the submission.
+  - validation error messages: `Price format is incorrect: too many digits`, `Price format is incorrect: non-finite value`
 
-You can find the validation function here:
+You can find the validation function (`_point_error`) here:
 
-[response_validation_v2.py#L51](https://github.com/synthdataco/synth-subnet/blob/main/synth/validator/response_validation_v2.py#L51)
+[response_validation_v2.py](https://github.com/synthdataco/synth-subnet/blob/main/synth/validator/response_validation_v2.py)
 
 And an example of the prompt parameters here:
 
