@@ -633,7 +633,7 @@ where
 - the first element is the timestamp of the start time of the prompt,
 - second is the time increment of the prompt,
 - then arrays of prices, where each point must be a finite number (no `NaN`/`Infinity`, no booleans) with at most 8 significant digits — magnitude and sign don't matter, e.g. `12345678.0`, `0.00012345678` and `1.2345e20` are all valid. Otherwise, the validator will reject the submission.
-  - validation error messages: `Price format is incorrect: too many digits`, `Price format is incorrect: non-finite value`
+  - validation error messages: `Price format is incorrect: too many digits <point>`, `Price format is incorrect: non-finite value <point>`
 
 You can find the validation function (`_point_error`) here:
 
