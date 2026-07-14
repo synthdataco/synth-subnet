@@ -201,7 +201,7 @@ def _build_detailed_info(
     miner_prediction_format_list: list,
     miner_prediction_id_list: list,
     miner_prediction_process_time: list,
-    percentile90: float,
+    percentile95: float,
     lowest_score: float,
 ) -> list[dict]:
     """Build detailed information dict from processing results."""
@@ -209,7 +209,7 @@ def _build_detailed_info(
         {
             "miner_uid": pred.miner_uid,
             "prompt_score_v3": float(prompt_score),
-            "percentile90": float(percentile90),
+            "percentile95": float(percentile95),
             "lowest_score": float(lowest_score),
             "miner_prediction_id": prediction_id,
             "format_validation": format,
@@ -341,7 +341,7 @@ def get_rewards_multiprocess(
         miner_prediction_process_time.append(process_time)
 
     score_values = np.array(scores)
-    prompt_scores, percentile90, lowest_score = compute_prompt_scores(
+    prompt_scores, percentile95, lowest_score = compute_prompt_scores(
         score_values
     )
 
@@ -359,7 +359,7 @@ def get_rewards_multiprocess(
         miner_prediction_format_list,
         miner_prediction_id_list,
         miner_prediction_process_time,
-        percentile90,
+        percentile95,
         lowest_score,
     )
 
@@ -371,11 +371,11 @@ def compute_prompt_scores(score_values: np.ndarray):
     if np.all(score_values == -1):
         return None, 0, 0
     score_values_valid = score_values[score_values != -1]
-    percentile90 = np.percentile(score_values_valid, 90)
-    capped_scores = np.minimum(score_values, percentile90)
-    capped_scores = np.where(score_values == -1, percentile90, capped_scores)
-    lowest_score = np.min(capped_scores)
-    return capped_scores - lowest_score, percentile90, lowest_score
+    percentile95 = np.percentile(score_values_valid, 95)
+    # Valid scores are not capped; only missed responses (-1) are filled.
+    filled_scores = np.where(score_values == -1, percentile95, score_values)
+    lowest_score = np.min(filled_scores)
+    return filled_scores - lowest_score, percentile95, lowest_score
 
 
 def compute_softmax(score_values: np.ndarray, beta: float) -> np.ndarray:

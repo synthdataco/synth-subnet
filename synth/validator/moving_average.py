@@ -38,7 +38,7 @@ def prepare_df_for_moving_average(df):
     """Prepare miner scores for moving average computation.
 
     For miners that joined after the earliest scored_time in the window,
-    backfills missing earlier timestamps with the worst score (percentile90 - lowest_score)
+    backfills missing earlier timestamps with the worst score (percentile95 - lowest_score)
     so they are not unfairly advantaged by having fewer data points.
 
     Miners present from the start keep only their real scores (no backfill).
@@ -54,11 +54,11 @@ def prepare_df_for_moving_average(df):
     global_score_asset_mapping = {}
     for t in all_times:
         sample = df.loc[df["scored_time"] == t].iloc[0]
-        p90 = sample.get("percentile90")
+        p95 = sample.get("percentile95")
         low = sample.get("lowest_score")
-        if p90 is None or low is None:
+        if p95 is None or low is None:
             continue
-        global_worst_score_mapping[t] = p90 - low
+        global_worst_score_mapping[t] = p95 - low
         global_score_asset_mapping[t] = sample["asset"]
 
     # Identify new miners (first appearance after the window start)
