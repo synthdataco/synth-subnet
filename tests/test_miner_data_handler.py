@@ -416,13 +416,19 @@ def test_set_get_scores(db_engine: Engine):
     # get_miner_scores must still surface them as percentile95.
     with db_engine.connect() as connection:
         with connection.begin():
-            connection.execute(text("""
+            connection.execute(
+                text(
+                    """
                     UPDATE miner_scores
                     SET score_details_v3 = (score_details_v3 - 'percentile95')
                         || jsonb_build_object(
                             'percentile90',
                             score_details_v3->'percentile95')
-                    """))
+                    WHERE scored_time = :scored_time
+                    """
+                ),
+                {"scored_time": scored_time},
+            )
 
     old_key_df = handler.get_miner_scores(
         scored_time=scored_time,
