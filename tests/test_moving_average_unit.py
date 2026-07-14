@@ -925,7 +925,7 @@ class TestRealisticData:
         rows = []
         for ti, t in enumerate(times):
             asset = assets[ti % len(assets)]
-            p90 = rng.uniform(0.008, 0.015)
+            p95 = rng.uniform(0.008, 0.015)
             low = 0.0
             for mi in range(n_miners):
                 # ~0.5% chance of missing (99.5% fill rate)
@@ -943,7 +943,7 @@ class TestRealisticData:
                         "prompt_score_v3": score,
                         "scored_time": t,
                         "asset": asset,
-                        "percentile95": p90,
+                        "percentile95": p95,
                         "lowest_score": low,
                     }
                 )
@@ -1129,7 +1129,7 @@ class TestRealisticData:
         miner999 = prepared[prepared["miner_id"] == 999]
         assert len(miner999) > 1  # more than just the real row
 
-        # Backfilled scores should be worst score (p90 - lowest)
+        # Backfilled scores should be worst score (p95 - lowest)
         backfilled = miner999[miner999["scored_time"] < last_time]
         assert len(backfilled) > 0
         for _, row in backfilled.iterrows():
