@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 
 from synth.miner import price_simulation
 from synth.miner.price_simulation import (
+    BINANCE_ASSET_MAP,
     HYPERLIQUID_ASSET_MAP,
     TOKEN_MAP,
     get_asset_price,
@@ -27,6 +28,26 @@ class TestGetAssetPriceHermes(unittest.TestCase):
 
         assert called_url == price_simulation.pyth_base_url
         assert price == 754.318
+
+
+class TestGetAssetPriceBinance(unittest.TestCase):
+    def test_crypto_major_routes_to_binance_ticker(self):
+        assert "BTC" not in HYPERLIQUID_ASSET_MAP
+        assert BINANCE_ASSET_MAP["BTC"] == "BTCUSDT"
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "symbol": "BTCUSDT",
+            "price": "63128.00",
+        }
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            price = get_asset_price("BTC")
+
+        assert price == 63128.0
+        called_url = mock_get.call_args[0][0]
+        assert called_url == price_simulation.binance_ticker_url
+        assert mock_get.call_args.kwargs["params"] == {"symbol": "BTCUSDT"}
 
 
 class TestGetAssetPriceHyperliquid(unittest.TestCase):
@@ -54,8 +75,8 @@ class TestGetAssetPriceHyperliquid(unittest.TestCase):
         assert body["req"]["coin"] == coin
         assert body["req"]["interval"] == "1m"
 
-    def test_crypto_major_routes_to_main_dex(self):
-        self._assert_routes_to_hyperliquid("BTC", "BTC", "79301.0")
+    def test_hype_routes_to_hyperliquid_spot(self):
+        self._assert_routes_to_hyperliquid("HYPE", "@107", "60.10")
 
     def test_equity_routes_to_xyz_dex(self):
         self._assert_routes_to_hyperliquid("NVDAX", "xyz:NVDA", "206.70")
@@ -69,10 +90,11 @@ class TestGetAssetPriceHyperliquid(unittest.TestCase):
     def test_spcx_routes_to_hyperliquid(self):
         self._assert_routes_to_hyperliquid("SPCX", "xyz:SPCX", "187.08")
 
-    def test_map_matches_validator(self):
+    def test_maps_match_validator(self):
         # Miners must fetch spot from the exact feed the validator scores
         # against.
         assert HYPERLIQUID_ASSET_MAP == PriceDataProvider.HYPERLIQUID_ASSET_MAP
+        assert BINANCE_ASSET_MAP == PriceDataProvider.BINANCE_ASSET_MAP
 
 
 if __name__ == "__main__":

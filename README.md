@@ -115,7 +115,7 @@ The asset set has grown over time:
 | 2026-01    | Added tokenized equities SPYX, NVDAX, TSLAX, AAPLX, GOOGLX to the `24h` competition.                                                                                                                                  |
 | 2026-03    | Added XRP, HYPE, WTIOIL to the `24h` competition; added HYPE to the `1h` competition.                                                                                                                                 |
 | 2026-06    | Changed the split of the competitions from 2 (1h/24h) to 3 (Crypto 1h, Crypto 24h, Commodities/Equities 24h). Added XRP to the 1h time length, removed XAU from the 1h time length, added SPCX to the 24h time length |
-| 2026-07    | Migrated all price feeds from Pyth to Hyperliquid. Replaced SPYX (tokenized SPY) with SP500 (S&P 500 index) in the Commodities/Equities 24h competition.                                                              |
+| 2026-07    | Migrated price feeds off Pyth: BTC/ETH/SOL/XRP to Binance spot, HYPE to Hyperliquid spot, equities/commodities to Hyperliquid perps. Replaced SPYX (tokenized SPY) with SP500 (S&P 500 index) in the Commodities/Equities 24h competition. |
 
 Whereas other subnets ask miners to predict single values for future prices, we’re interested in the miners correctly quantifying uncertainty. We want their price paths to represent their view of the probability distribution of the future price, and we want their paths to encapsulate realistic price dynamics, such as volatility clustering and skewed fat tailed price change distributions. As the network matures, modelling the correlations between asset prices will be essential.
 
@@ -154,7 +154,7 @@ where:
 
 - $N = \dfrac{T}{\Delta t}$ is the total number of increments.
 
-We recommend the miner sends a request to the Hyperliquid API to acquire the price of the asset at the start_time (see `synth/miner/price_simulation.py` for the reference implementation and the asset-to-coin mapping).
+We recommend the miner acquires the price of the asset at the start_time from the same feed the validator scores against: Binance spot for BTC/ETH/SOL/XRP, Hyperliquid for everything else (see `synth/miner/price_simulation.py` for the reference implementation and the asset maps).
 
 If they fail to return predictions by the start_time or the predictions are in the wrong format, the submission is marked invalid and assigned the 90th-percentile score during the per-prompt CRPS transformation (see [§1.4](#14-calculation-of-leaderboard-score)).
 
@@ -211,7 +211,7 @@ To comprehensively assess the miners' forecasts, the CRPS is applied to sets of 
 For each time increment:
 
 - **Predicted Price Changes**: The miners' ensemble forecasts are used to compute predicted price changes in basis points over the specified intervals
-- **Observed Price Changes**: The real asset prices are used to calculate the observed price changes in basis points over the same intervals. The validator scores against Hyperliquid 1-minute candle close prices (see `synth/validator/price_data_provider.py` for the asset-to-coin mapping).
+- **Observed Price Changes**: The real asset prices are used to calculate the observed price changes in basis points over the same intervals. The validator scores against 1-minute candle close prices — Binance spot for BTC/ETH/SOL/XRP, Hyperliquid spot for HYPE, Hyperliquid perps for equities/commodities (see the asset maps in `synth/validator/price_data_provider.py`).
 - **CRPS Calculation**: The CRPS is calculated for each increment by comparing the ensemble of predicted changes in basis points to the observed price change.
 
 The final score for a miner for a single checking prompt is the sum of these CRPS values over all the time increments.

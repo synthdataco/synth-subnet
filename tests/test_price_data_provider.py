@@ -8,7 +8,7 @@ from synth.db.models import ValidatorRequest
 from synth.validator.price_data_provider import PriceDataProvider
 
 validator_request = ValidatorRequest(
-    asset="BTC",
+    asset="XAU",
     start_time=datetime.fromisoformat("2025-02-19T14:12:00+00:00"),
     time_length=360,
     time_increment=120,
@@ -25,6 +25,23 @@ def _mock_hl_session(candles: list[dict]) -> MagicMock:
     session_cls = MagicMock()
     session = session_cls.return_value.__enter__.return_value
     session.post.return_value.json.return_value = candles
+    return session_cls
+
+
+def _bn_klines(timestamps: list[int], closes: list[float]) -> list[list]:
+    """Binance kline shape: [openTime(ms), o, h, l, c, v, closeTime, ...],
+    prices as strings."""
+    return [
+        [t * 1000, "0", "0", "0", str(c), "0", t * 1000 + 59_999]
+        for t, c in zip(timestamps, closes)
+    ]
+
+
+def _mock_bn_session(klines: list[list]) -> MagicMock:
+    """A stand-in for requests.Session whose get() returns `klines`."""
+    session_cls = MagicMock()
+    session = session_cls.return_value.__enter__.return_value
+    session.get.return_value.json.return_value = klines
     return session_cls
 
 
@@ -104,13 +121,13 @@ class TestPriceDataProvider(unittest.TestCase):
         )
 
         with patch("requests.Session", _mock_hl_session(candles)):
-            validator_request_eth = ValidatorRequest(
-                asset="ETH",
+            validator_request_sp500 = ValidatorRequest(
+                asset="SP500",
                 start_time=datetime.fromisoformat("2025-02-19T14:12:00+00:00"),
                 time_length=360,
                 time_increment=60,
             )
-            result = self.dataProvider.fetch_data(validator_request_eth)
+            result = self.dataProvider.fetch_data(validator_request_sp500)
 
             assert result == [
                 100000.23,
@@ -223,7 +240,7 @@ class TestPriceDataProvider(unittest.TestCase):
 
         with patch("requests.Session", _mock_hl_session(candles)):
             validator_request = ValidatorRequest(
-                asset="BTC",
+                asset="XAU",
                 start_time=datetime.fromisoformat("2025-02-19T14:12:00+00:00"),
                 time_length=600,
                 time_increment=300,
@@ -277,7 +294,7 @@ class TestPriceDataProvider(unittest.TestCase):
 
         with patch("requests.Session", _mock_hl_session(candles)):
             validator_request = ValidatorRequest(
-                asset="BTC",
+                asset="XAU",
                 start_time=datetime.fromisoformat("2025-02-19T14:12:00+00:00"),
                 time_length=600,
                 time_increment=300,
@@ -333,7 +350,7 @@ class TestPriceDataProvider(unittest.TestCase):
 
         with patch("requests.Session", _mock_hl_session(candles)):
             validator_request = ValidatorRequest(
-                asset="BTC",
+                asset="XAU",
                 start_time=datetime.fromisoformat("2025-02-19T14:12:00+00:00"),
                 time_length=600,
                 time_increment=300,
@@ -344,11 +361,9 @@ class TestPriceDataProvider(unittest.TestCase):
             assert result == [100000.23, 105000.55, 105123.345]
 
     def test_fetch_data(self):
-        # Live call to Hyperliquid — uses a recent window because 1m
-        # candles are only retained for ~3.5 days (rolling 5000 candles).
-        # The shared module-level `validator_request` is fine for the
-        # mocked tests above but its hardcoded 2025-02 date is outside
-        # the live window.
+        # Live call (BTC routes through Binance spot klines) — uses a
+        # recent window so the mocked module-level `validator_request`
+        # date doesn't leak into a live query.
         start = datetime.now(timezone.utc).replace(
             second=0, microsecond=0
         ) - timedelta(minutes=15)
@@ -389,7 +404,7 @@ class TestSettlementGuard(unittest.TestCase):
                     provider,
                     beginning=1739974320,
                     end=1739974680,
-                    symbol="BTC",
+                    symbol="XAU",
                     time_increment=120,
                 )
 
@@ -408,7 +423,7 @@ class TestSettlementGuard(unittest.TestCase):
                 provider,
                 beginning=1739974320,
                 end=1739974680,
-                symbol="BTC",
+                symbol="XAU",
                 time_increment=120,
             )
 
@@ -433,6 +448,67 @@ class TestSettlementGuard(unittest.TestCase):
         PriceDataProvider._assert_settled(
             data, "SPYX", "req-1", last_grid_timestamp=1739974680
         )
+
+
+class TestPriceDataProviderBinance(unittest.TestCase):
+    """Crypto majors are scored from Binance spot 1m klines."""
+
+    def test_btc_uses_binance_klines(self):
+        # 1739974740 is the settlement-witness kline past the last grid
+        # point at 1739974680 (= start + time_length).
+        klines = _bn_klines(
+            [
+                1739974320,
+                1739974440,
+                1739974560,
+                1739974680,
+                1739974740,
+            ],
+            [100000.23, 99000.55, 103000.55, 108000.867, 108500.0],
+        )
+
+        btc_request = ValidatorRequest(
+            asset="BTC",
+            start_time=datetime.fromisoformat("2025-02-19T14:12:00+00:00"),
+            time_length=360,
+            time_increment=120,
+        )
+
+        provider = PriceDataProvider()
+        session_cls = _mock_bn_session(klines)
+        with patch("requests.Session", session_cls):
+            result = provider.fetch_data(btc_request)
+
+        session = session_cls.return_value.__enter__.return_value
+        called_url = session.get.call_args[0][0]
+        assert called_url == PriceDataProvider.BINANCE_SPOT_URL
+        params = session.get.call_args.kwargs["params"]
+        assert params["symbol"] == "BTCUSDT"
+        assert params["interval"] == "1m"
+        # The fetch window must extend one minute past the last grid
+        # point so the settlement witness can land in the response.
+        assert params["endTime"] == (1739974680 + 60) * 1000
+        assert result == [100000.23, 99000.55, 103000.55, 108000.867]
+
+    def test_raises_when_no_kline_past_last_grid(self):
+        # All klines are within the grid — no settlement witness.
+        klines = _bn_klines(
+            [1739974320, 1739974440, 1739974560, 1739974680],
+            [1.0, 2.0, 3.0, 4.0],
+        )
+
+        provider = PriceDataProvider()
+        # Call the unwrapped function to skip the tenacity retries.
+        download = PriceDataProvider.download_binance_price_data
+        with patch("requests.Session", _mock_bn_session(klines)):
+            with self.assertRaises(ValueError):
+                download.__wrapped__(
+                    provider,
+                    beginning=1739974320,
+                    end=1739974680,
+                    symbol="BTC",
+                    time_increment=120,
+                )
 
 
 class TestPriceDataProviderPythTail(unittest.TestCase):
@@ -509,9 +585,15 @@ class TestPriceDataProviderLive(unittest.TestCase):
             self.assertGreater(p, 0, f"{asset}: non-positive price")
             self.assertLess(p, 10_000_000, f"{asset}: suspicious magnitude")
 
-    def test_live_history_per_asset(self):
+    def test_live_history_hyperliquid_per_asset(self):
         provider = PriceDataProvider()
         for asset in PriceDataProvider.HYPERLIQUID_ASSET_MAP.keys():
+            with self.subTest(asset=asset):
+                self._assert_live_history(provider, asset)
+
+    def test_live_history_binance_per_asset(self):
+        provider = PriceDataProvider()
+        for asset in PriceDataProvider.BINANCE_ASSET_MAP.keys():
             with self.subTest(asset=asset):
                 self._assert_live_history(provider, asset)
 

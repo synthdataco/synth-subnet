@@ -10,16 +10,16 @@ from tenacity import (
     wait_random_exponential,
 )
 
-# Hyperliquid `coin` codes: main-dex perps for the crypto majors,
-# HIP-3 builder dexs for equities/commodities/gold. All trade 24/7.
-# Same map as the validator's PriceDataProvider.HYPERLIQUID_ASSET_MAP —
-# miners must read the feed the validator scores against.
+BINANCE_ASSET_MAP = {
+    "BTC": "BTCUSDT",
+    "ETH": "ETHUSDT",
+    "SOL": "SOLUSDT",
+    "XRP": "XRPUSDT",
+}
+
 HYPERLIQUID_ASSET_MAP = {
-    "BTC": "BTC",
-    "ETH": "ETH",
-    "SOL": "SOL",
-    "XRP": "XRP",
-    "HYPE": "HYPE",
+    # HL spot HYPE/USDC (spot coins are addressed by `@<index>`).
+    "HYPE": "@107",
     "XAU": "xyz:GOLD",
     "NVDAX": "xyz:NVDA",
     "TSLAX": "xyz:TSLA",
@@ -38,6 +38,7 @@ TOKEN_MAP = {
 }
 
 hyperliquid_base_url = "https://api.hyperliquid.xyz/info"
+binance_ticker_url = "https://api.binance.com/api/v3/ticker/price"
 pyth_base_url = "https://hermes.pyth.network/v2/updates/price/latest"
 
 
@@ -57,6 +58,19 @@ def _fetch_price_hermes(asset: str) -> float | None:
 
     live_price: float = price * (10**expo)
     return live_price
+
+
+def _fetch_price_binance(asset: str) -> float | None:
+    response = requests.get(
+        binance_ticker_url,
+        params={"symbol": BINANCE_ASSET_MAP[asset]},
+        timeout=30,
+    )
+    if response.status_code != 200:
+        print("Error in response of Binance API")
+        return None
+
+    return float(response.json()["price"])
 
 
 def _fetch_price_hyperliquid(asset: str) -> float | None:
@@ -88,6 +102,8 @@ def _fetch_price_hyperliquid(asset: str) -> float | None:
     reraise=True,
 )
 def get_asset_price(asset="BTC") -> float | None:
+    if asset in BINANCE_ASSET_MAP:
+        return _fetch_price_binance(asset)
     if asset in HYPERLIQUID_ASSET_MAP:
         return _fetch_price_hyperliquid(asset)
     return _fetch_price_hermes(asset)

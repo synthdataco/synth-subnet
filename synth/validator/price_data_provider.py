@@ -19,6 +19,7 @@ from synth.utils.logging import print_execution_time
 
 class PriceDataProvider:
     HYPERLIQUID_BASE_URL = "https://api.hyperliquid.xyz/info"
+    BINANCE_SPOT_URL = "https://api.binance.com/api/v3/klines"
 
     PYTH_PRO_URL = "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
     PYTH_SYMBOL_MAP = {
@@ -40,12 +41,17 @@ class PriceDataProvider:
     # the witness once we do attempt.
     CANDLE_INTERVAL_SECONDS = 60
 
+    BINANCE_ASSET_MAP = {
+        "BTC": "BTCUSDT",
+        "ETH": "ETHUSDT",
+        "SOL": "SOLUSDT",
+        "XRP": "XRPUSDT",
+    }
+
     HYPERLIQUID_ASSET_MAP = {
-        "BTC": "BTC",
-        "ETH": "ETH",
-        "SOL": "SOL",
-        "XRP": "XRP",
-        "HYPE": "HYPE",
+        # HL spot HYPE/USDC (spot coins are addressed by `@<index>` in
+        # candleSnapshot, same endpoint as perps).
+        "HYPE": "@107",
         "XAU": "xyz:GOLD",
         "NVDAX": "xyz:NVDA",
         "TSLAX": "xyz:TSLA",
@@ -59,7 +65,8 @@ class PriceDataProvider:
     @staticmethod
     def assert_assets_supported(asset_list: list[str]):
         supported = (
-            PriceDataProvider.HYPERLIQUID_ASSET_MAP.keys()
+            PriceDataProvider.BINANCE_ASSET_MAP.keys()
+            | PriceDataProvider.HYPERLIQUID_ASSET_MAP.keys()
             | PriceDataProvider.PYTH_SYMBOL_MAP.keys()
         )
         for asset in asset_list:
@@ -80,7 +87,9 @@ class PriceDataProvider:
         """
         asset = str(validator_request.asset)
 
-        if asset in self.HYPERLIQUID_ASSET_MAP:
+        if asset in self.BINANCE_ASSET_MAP:
+            prices = self.fetch_data_binance(validator_request)
+        elif asset in self.HYPERLIQUID_ASSET_MAP:
             prices = self.fetch_data_hyperliquid(validator_request)
         else:
             prices = self.fetch_data_pyth(validator_request)
@@ -106,6 +115,102 @@ class PriceDataProvider:
             end=start_time_int + int(validator_request.time_length),
             symbol=str(validator_request.asset),
             time_increment=int(validator_request.time_increment),
+        )
+
+    def fetch_data_binance(self, validator_request: ValidatorRequest) -> list:
+        start_time_int = from_iso_to_unix_time(
+            validator_request.start_time.isoformat()
+        )
+        return self.download_binance_price_data(
+            beginning=start_time_int,
+            end=start_time_int + int(validator_request.time_length),
+            symbol=str(validator_request.asset),
+            time_increment=int(validator_request.time_increment),
+        )
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_random_exponential(multiplier=2),
+        reraise=True,
+        before=before_log(bt.logging._logger, logging.DEBUG),
+    )
+    def download_binance_price_data(
+        self,
+        beginning: int,  # Unix timestamp in seconds
+        end: int,  # Unix timestamp in seconds
+        symbol: str,
+        time_increment: int = 60,
+        loop_wait_time_seconds: float = 0.1,
+    ) -> list:
+        MAX_KLINES = 1000
+        INTERVAL_MS = 60 * 1000  # 1 minute in ms
+        chunk_ms = MAX_KLINES * INTERVAL_MS
+
+        beginning_ms = beginning * 1000
+        end_ms = end * 1000
+        # Settlement guard: extend the request by one extra minute so we
+        # can verify the kline at `end_ms` has closed. Binance prints
+        # klines eagerly every minute (even with zero trades), so the
+        # witness semantics match the Hyperliquid path.
+        settlement_witness_ms = end_ms + self.CANDLE_INTERVAL_SECONDS * 1000
+        klines = []
+        saw_settled_witness = False
+
+        with requests.Session() as session:
+            current_start = beginning_ms
+            while current_start < settlement_witness_ms:
+                current_end = min(
+                    current_start + chunk_ms - INTERVAL_MS,
+                    settlement_witness_ms,
+                )
+
+                params = {
+                    "symbol": self.BINANCE_ASSET_MAP[symbol],
+                    "interval": "1m",
+                    "startTime": current_start,
+                    "endTime": current_end,
+                    "limit": MAX_KLINES,
+                }
+
+                response = session.get(
+                    self.BINANCE_SPOT_URL, params=params, timeout=30
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                bt.logging.debug(
+                    f"Fetched {len(data)} klines for {symbol} [{current_start}, {current_end}]"
+                )
+
+                for kline in data:
+                    t = int(kline[0])  # open time in ms
+                    if beginning_ms <= t <= end_ms:
+                        klines.append(kline)
+                    if t > end_ms:
+                        saw_settled_witness = True
+
+                current_start += chunk_ms
+                time.sleep(loop_wait_time_seconds)
+
+        if not saw_settled_witness:
+            bt.logging.warning(
+                f"realized path not yet settled for asset {symbol}: no "
+                f"Binance kline with open time > {end_ms} ms"
+            )
+            raise ValueError(
+                f"realized path not yet settled for asset {symbol}"
+            )
+
+        if not klines:
+            bt.logging.warning(f"No data returned from Binance for {symbol}")
+            return []
+
+        normalized = {
+            "t": [int(kline[0]) // 1000 for kline in klines],
+            "c": [float(kline[4]) for kline in klines],
+        }
+        return self._transform_data(
+            normalized, beginning, time_increment, end - beginning
         )
 
     def fetch_data_pyth(self, validator_request: ValidatorRequest) -> list:
