@@ -39,6 +39,7 @@ from synth.utils.logging import print_execution_time
 from synth.utils.uids import check_uid_availability
 from synth.validator import competition_config
 from synth.validator.miner_data_handler import MinerDataHandler
+from synth.validator.prediction_notifier import PredictionNotifier
 from synth.validator.moving_average import (
     combine_moving_averages,
     compute_smoothed_score,
@@ -184,6 +185,7 @@ def query_available_miners_and_save_responses(
     miner_uids: list,
     simulation_input: SimulationInput,
     request_time: datetime,
+    prediction_notifier: PredictionNotifier | None = None,
 ):
     timeout = timeout_from_start_time(simulation_input.start_time)
 
@@ -246,11 +248,19 @@ def query_available_miners_and_save_responses(
         )
 
     if len(miner_predictions) > 0:
-        miner_data_handler.save_responses(
+        validator_requests_id = miner_data_handler.save_responses(
             miner_predictions,
             simulation_input,
             request_time,
         )
+        if (
+            validator_requests_id is not None
+            and prediction_notifier is not None
+        ):
+            prediction_notifier.publish_stored(
+                validator_request_id=validator_requests_id,
+                simulation_input=simulation_input,
+            )
     else:
         bt.logging.info("skip saving because no prediction")
 

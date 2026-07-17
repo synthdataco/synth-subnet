@@ -43,6 +43,9 @@ from synth.db.models import (
     WeightsUpdateHistory,
 )
 from synth.simulation_input import SimulationInput
+from synth.validator.bigtable_prediction_storage import (
+    BigtablePredictionStorage,
+)
 from synth.utils.logging import print_execution_time
 from synth.validator import prompt_config, response_validation_v2
 from synth.validator.price_data_provider import PriceDataProvider
@@ -51,27 +54,21 @@ from synth.validator.storage_backend import (
     BIGTABLE_SENTINEL,
 )
 
-if typing.TYPE_CHECKING:
-    # Imported only for type hints. The Bigtable storage module pulls in
-    # google-cloud-bigtable, which is optional for validators that stay on
-    # the Postgres backend.
-    from synth.validator.bigtable_prediction_storage import (
-        BigtablePredictionStorage,
-    )
-
-# Observed headroom for Pyth to index the candle that opens at the end of
-# the prediction window. Combined with one full candle interval below, it
-# decides when a request becomes eligible for scoring. Tune via logs of
-# `realized path not yet settled` warnings — if those fire repeatedly,
-# Pyth's tail latency exceeds this and the value should grow.
-PYTH_PUBLISH_LATENCY_SECONDS = 30
+# Observed headroom for Hyperliquid to index the candle that opens at the
+# end of the prediction window. Combined with one full candle interval
+# below, it decides when a request becomes eligible for scoring. Tune via
+# logs of `realized path not yet settled` warnings — if those fire
+# repeatedly, the feed's tail latency exceeds this and the value should
+# grow.
+PRICE_PUBLISH_LATENCY_SECONDS = 30
 
 # Scoring gate = the candle interval that the settlement guard in
-# PriceDataProvider looks past + headroom for Pyth to publish that witness
-# candle. Must be >= PriceDataProvider.CANDLE_INTERVAL_SECONDS or the
-# guard inside fetch_data will fail every first attempt and rely on retry.
+# PriceDataProvider looks past + headroom for the feed to publish that
+# witness candle. Must be >= PriceDataProvider.CANDLE_INTERVAL_SECONDS or
+# the guard inside fetch_data will fail every first attempt and rely on
+# retry.
 SCORING_GATE_SECONDS = (
-    PriceDataProvider.CANDLE_INTERVAL_SECONDS + PYTH_PUBLISH_LATENCY_SECONDS
+    PriceDataProvider.CANDLE_INTERVAL_SECONDS + PRICE_PUBLISH_LATENCY_SECONDS
 )
 
 
@@ -79,7 +76,7 @@ class MinerDataHandler:
     def __init__(
         self,
         engine: typing.Optional[Engine] = None,
-        bigtable_storage: typing.Optional["BigtablePredictionStorage"] = None,
+        bigtable_storage: typing.Optional[BigtablePredictionStorage] = None,
     ):
         # Use the provided engine or fall back to the default engine
         self.engine = engine or get_engine()
@@ -558,7 +555,7 @@ class MinerDataHandler:
                     + literal_column("INTERVAL '1 second'")
                     * ValidatorRequest.time_length
                     # Wait one full candle interval past window-end so the
-                    # last candle has closed, plus headroom for Pyth to
+                    # last candle has closed, plus headroom for the feed to
                     # publish the witness candle that PriceDataProvider's
                     # settlement guard checks for. See SCORING_GATE_SECONDS.
                     + literal_column("INTERVAL '1 second'")

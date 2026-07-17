@@ -40,7 +40,11 @@ from synth.validator.forward import (
     query_available_miners_and_save_responses,
     send_weights_to_bittensor_and_update_weights_history,
 )
+from synth.validator.bigtable_prediction_storage import (
+    BigtablePredictionStorage,
+)
 from synth.validator.miner_data_handler import MinerDataHandler
+from synth.validator.prediction_notifier import PredictionNotifier
 from synth.validator.price_data_provider import PriceDataProvider
 from synth.validator.storage_backend import STORAGE_BACKEND_BIGTABLE
 from synth.validator import competition_config
@@ -86,13 +90,10 @@ class Validator(BaseValidatorNeuron):
 
         bigtable_storage = None
         if self.config.storage.backend == STORAGE_BACKEND_BIGTABLE:
-            # Lazy import keeps google-cloud-bigtable optional for
-            # validators that stay on the Postgres backend.
-            from synth.validator.bigtable_prediction_storage import (
-                BigtablePredictionStorage,
-            )
-
             bigtable_storage = BigtablePredictionStorage()
+        # None (disabled) unless both PUBSUB_PROJECT and
+        # PUBSUB_TOPIC_PREDICTIONS are set.
+        self.prediction_notifier = PredictionNotifier.from_env()
         self.miner_data_handler = MinerDataHandler(
             bigtable_storage=bigtable_storage
         )
@@ -287,6 +288,7 @@ class Validator(BaseValidatorNeuron):
             miner_uids=self.miner_uids,
             simulation_input=simulation_input,
             request_time=request_time,
+            prediction_notifier=self.prediction_notifier,
         )
 
     @print_execution_time
