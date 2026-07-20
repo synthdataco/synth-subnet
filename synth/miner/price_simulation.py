@@ -1,3 +1,4 @@
+import os
 import time
 
 import requests
@@ -38,7 +39,13 @@ TOKEN_MAP = {
 }
 
 hyperliquid_base_url = "https://api.hyperliquid.xyz/info"
-binance_ticker_url = "https://api.binance.com/api/v3/ticker/price"
+# BINANCE_API_HOST is a process-env escape hatch (read at import time):
+# api.binance.com returns HTTP 451 from geo-restricted regions, e.g. the
+# US-hosted CI runners, which use data-api.binance.vision instead.
+binance_ticker_url = (
+    os.environ.get("BINANCE_API_HOST", "https://api.binance.com")
+    + "/api/v3/ticker/price"
+)
 pyth_base_url = "https://hermes.pyth.network/v2/updates/price/latest"
 
 

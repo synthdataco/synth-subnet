@@ -41,4 +41,8 @@ jobs:
           uv run black --check .
 
       - name: Run unit tests
+        env:
+          # api.binance.com geo-blocks US IPs (HTTP 451) and GitHub
+          # runners are US-hosted; use Binance's public market-data host.
+          BINANCE_API_HOST: https://data-api.binance.vision
         run: uv run pytest ./tests/

@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 import requests
 
@@ -19,7 +20,13 @@ from synth.utils.logging import print_execution_time
 
 class PriceDataProvider:
     HYPERLIQUID_BASE_URL = "https://api.hyperliquid.xyz/info"
-    BINANCE_SPOT_URL = "https://api.binance.com/api/v3/klines"
+    # BINANCE_API_HOST is a process-env escape hatch (read at import time):
+    # api.binance.com returns HTTP 451 from geo-restricted regions, e.g.
+    # the US-hosted CI runners, which use data-api.binance.vision instead.
+    BINANCE_SPOT_URL = (
+        os.environ.get("BINANCE_API_HOST", "https://api.binance.com")
+        + "/api/v3/klines"
+    )
 
     PYTH_PRO_URL = "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
     PYTH_SYMBOL_MAP = {

@@ -117,7 +117,7 @@ def test_calculate_moving_average_and_update_rewards_new_miner(
         ) + timedelta(hours=i)
         start_time_str = start_time.isoformat()
         simulation_input = SimulationInput(
-            asset="BTC",
+            asset="HYPE",
             start_time=start_time_str,
             time_increment=300,
             time_length=86400,
@@ -233,7 +233,7 @@ def test_calculate_moving_average_and_update_rewards_new_miner_registration(
         ) + timedelta(hours=i)
         start_time_str = start_time.isoformat()
         simulation_input = SimulationInput(
-            asset="BTC" if i % 2 == 0 else "ETH",
+            asset="HYPE",
             start_time=start_time_str,
             time_increment=300,
             time_length=86400,
@@ -400,7 +400,10 @@ def test_moving_average_writes_all_three_competitions(db_engine: Engine):
     """
     handler = MinerDataHandler(db_engine)
     miner_ids = [90101, 90102]  # high ids to avoid collision with other tests
-    scored_time = datetime.now(timezone.utc) - timedelta(hours=1)
+    # 30 days back so the module-shared DB's rows from other tests (live
+    # scores near now, with huge CRPS values) fall outside this cutoff and
+    # can't drown the seeded miners in the softmax.
+    scored_time = datetime.now(timezone.utc) - timedelta(days=30)
 
     now = datetime.now(timezone.utc)
     with db_engine.connect() as connection:
@@ -494,7 +497,7 @@ def test_calculate_moving_average_and_update_rewards_only_invalid(
         ) + timedelta(hours=i)
         start_time_str = start_time.isoformat()
         simulation_input = SimulationInput(
-            asset="BTC",
+            asset="HYPE",
             start_time=start_time_str,
             time_increment=300,
             time_length=86400,

@@ -48,7 +48,7 @@ def prepare_random_predictions(db_engine: Engine, start_time: str):
             connection.execute(insert_stmt_validator)
 
     simulation_input = SimulationInput(
-        asset="BTC",
+        asset="HYPE",
         start_time=start_time,
         time_increment=300,
         time_length=86400,

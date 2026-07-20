@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import MagicMock, patch
+
 import numpy as np
+import requests
 
 
 from synth.db.models import ValidatorRequest
@@ -373,7 +375,12 @@ class TestPriceDataProvider(unittest.TestCase):
             time_length=360,
             time_increment=120,
         )
-        result = self.dataProvider.fetch_data(live_request)
+        try:
+            result = self.dataProvider.fetch_data(live_request)
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 451:
+                self.skipTest("feed geo-blocks this runner (HTTP 451)")
+            raise
         # 360s / 120s + 1 grid points; all finite and positive (BTC > 0).
         assert len(result) == 4
         assert all(np.isfinite(p) for p in result)
@@ -570,7 +577,14 @@ class TestPriceDataProviderLive(unittest.TestCase):
             time_length=600,
             time_increment=60,
         )
-        prices = provider.fetch_data(req)
+        try:
+            prices = provider.fetch_data(req)
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 451:
+                self.skipTest(
+                    f"{asset}: feed geo-blocks this runner (HTTP 451)"
+                )
+            raise
 
         # time_length=600s @ time_increment=60s => 11 grid points.
         self.assertEqual(len(prices), 11)

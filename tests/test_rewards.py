@@ -84,7 +84,7 @@ def test_get_rewards(db_engine):
     price_data_provider = PriceDataProvider()
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7, 86400, ["BTC"]
+        scored_time, 7, 86400, ["HYPE"]
     )
 
     prompt_scores, detailed_info, real_prices = get_rewards_multiprocess(
