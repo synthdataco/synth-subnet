@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — scheduled for 2026-07-23
+
+- Price feeds migrate off Pyth: validator ground-truth candles and the reference miner's spot price now come from **Binance spot** for BTC/ETH/SOL/XRP (`BTCUSDT`, …), **Hyperliquid spot** for HYPE (`HYPE/USDC`), and **Hyperliquid perps** for equities/commodities (`xyz:*`). The reference miner no longer uses `PYTH_API_KEY`, Pyth Lazer, or Pyth Hermes (Hermes remains only to serve SPYX prompts from not-yet-upgraded validators during the rollout)
+- SPYX (tokenized SPY, Pyth) is retired and replaced by a new asset **SP500** (S&P 500 index, Hyperliquid `xyz:SP500`, ~10x SPYX's price level) in the Commodities/Equities 24h competition. Prompting swaps at deploy; in-flight SPYX requests are still scored from Pyth and SPYX scores age out of the 10-day moving-average window naturally. SP500 inherits SPYX's rolling-average weight (`3.437935601155441`)
+- Validator: optional Pub/Sub notification for stored prediction cohorts.
+- `BINANCE_API_HOST` process-env override (default `https://api.binance.com`): `api.binance.com` returns HTTP 451 from geo-restricted regions (e.g. the US) — set `https://data-api.binance.vision` (Binance's public market-data host) there. Validators and miners hosted in restricted regions need this to fetch BTC/ETH/SOL/XRP
+
+## v1.10.3 — 2026-07-16
+
+- 1h competition frequency increase for BTC and HYPE: each is now prompted every 1 minute.
+- New `--validator.cycle_offset_minutes` flag for wall-clock lane scheduling ([#297](https://github.com/synthdataco/synth-subnet/pull/297))
+- Validator perf: metagraph sync and `metagraph_history` snapshots moved to their own schedule ([#296](https://github.com/synthdataco/synth-subnet/pull/296))
+- Validator perf: response validation vectorised; the price-format rule is redefined as "at most 8 significant digits" — strictly looser on real prices, stricter only on bools and non-finite values ([#301](https://github.com/synthdataco/synth-subnet/pull/301))
+- Scoring: removed the p90 cap on prompt scores; missing responses are filled with the p95 score ([#302](https://github.com/synthdataco/synth-subnet/pull/302))
+- Docs: added this CHANGELOG ([#299](https://github.com/synthdataco/synth-subnet/pull/299)); miner getting-started rework with backtesting step and 3-competition FAQs ([#300](https://github.com/synthdataco/synth-subnet/pull/300))
+
 ## v1.10.2 — 2026-07-09
 
 - Public miner profiles: miners can attach a public identity to their coldkey (display name, avatar, social handles, website), shown on their profile page on the competitor dashboard. Metadata is submitted via a script and signed with the coldkey ([#295](https://github.com/synthdataco/synth-subnet/pull/295)) — see [the miner tutorial](https://github.com/synthdataco/synth-subnet/blob/main/docs/miner_tutorial.md#5-set-up-your-public-miner-profile)
