@@ -28,7 +28,7 @@ LOW_FREQUENCY = PromptConfig(
         "XRP",
         "HYPE",
         "XAU",
-        "SPYX",
+        "SP500",
         "NVDAX",
         "GOOGLX",
         "TSLAX",

@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 import requests
 
@@ -18,52 +19,62 @@ from synth.utils.logging import print_execution_time
 
 
 class PriceDataProvider:
-    # `fixed_rate@200ms` is the channel that meets every feed's min_channel:
-    # stocks/metals/oil reject `real_time` with 404, but accept this. Crypto
-    # majors accept it too. One channel, every feed.
-    PYTH_PRO_URL = "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
     HYPERLIQUID_BASE_URL = "https://api.hyperliquid.xyz/info"
+    # BINANCE_API_HOST is a process-env escape hatch (read at import time):
+    # api.binance.com returns HTTP 451 from geo-restricted regions, e.g.
+    # the US-hosted CI runners, which use data-api.binance.vision instead.
+    BINANCE_SPOT_URL = (
+        os.environ.get("BINANCE_API_HOST", "https://api.binance.com")
+        + "/api/v3/klines"
+    )
 
-    # Both Pyth and Hyperliquid serve 1-minute candles indexed by their open
+    PYTH_PRO_URL = "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
+    PYTH_SYMBOL_MAP = {
+        "SPYX": "Crypto.SPYX/USD",
+    }
+
+    # Hyperliquid serves 1-minute candles indexed by their open
     # timestamp; the candle at T is only final once time has passed T + 60s.
     # `CANDLE_INTERVAL_SECONDS` is the *structural* offset — exactly one
     # candle past the last scored grid point, which is where the settlement
-    # witness lives. Asking Pyth for more (e.g. + 120s) doesn't make the
-    # witness arrive sooner; it just widens the query window unnecessarily.
+    # witness lives. Asking the source for more (e.g. + 120s) doesn't make
+    # the witness arrive sooner; it just widens the query window
+    # unnecessarily.
     #
-    # The *operational* wait (one candle interval + Pyth's publish latency)
+    # The *operational* wait (one candle interval + publish latency)
     # belongs to the scoring gate in
     # `miner_data_handler.SCORING_GATE_SECONDS` — that constant decides when
     # scoring is even attempted. This one only decides where to look for
     # the witness once we do attempt.
     CANDLE_INTERVAL_SECONDS = 60
 
-    # Assets fetched from Pyth
-    PYTH_SYMBOL_MAP = {
-        "BTC": "Crypto.BTC/USD",
-        "ETH": "Crypto.ETH/USD",
-        "XAU": "Crypto.XAUT/USD",
-        "SOL": "Crypto.SOL/USD",
-        "SPYX": "Crypto.SPYX/USD",
-        "NVDAX": "Crypto.NVDAX/USD",
-        "TSLAX": "Crypto.TSLAX/USD",
-        "AAPLX": "Crypto.AAPLX/USD",
-        "GOOGLX": "Crypto.GOOGLX/USD",
-        "XRP": "Crypto.XRP/USD",
-        "HYPE": "Crypto.HYPE/USD",
-        "SPCX": "Pyth.HL.SPCX/USDC",
+    BINANCE_ASSET_MAP = {
+        "BTC": "BTCUSDT",
+        "ETH": "ETHUSDT",
+        "SOL": "SOLUSDT",
+        "XRP": "XRPUSDT",
     }
 
-    # Assets fetched from Hyperliquid (overrides Pyth for these assets)
-    HYPERLIQUID_SYMBOL_MAP = {
+    HYPERLIQUID_ASSET_MAP = {
+        # HL spot HYPE/USDC (spot coins are addressed by `@<index>` in
+        # candleSnapshot, same endpoint as perps).
+        "HYPE": "@107",
+        "XAU": "xyz:GOLD",
+        "NVDAX": "xyz:NVDA",
+        "TSLAX": "xyz:TSLA",
+        "AAPLX": "xyz:AAPL",
+        "GOOGLX": "xyz:GOOGL",
+        "SP500": "xyz:SP500",
+        "SPCX": "xyz:SPCX",
         "WTIOIL": "xyz:CL",
     }
 
     @staticmethod
     def assert_assets_supported(asset_list: list[str]):
         supported = (
-            PriceDataProvider.PYTH_SYMBOL_MAP.keys()
-            | PriceDataProvider.HYPERLIQUID_SYMBOL_MAP.keys()
+            PriceDataProvider.BINANCE_ASSET_MAP.keys()
+            | PriceDataProvider.HYPERLIQUID_ASSET_MAP.keys()
+            | PriceDataProvider.PYTH_SYMBOL_MAP.keys()
         )
         for asset in asset_list:
             assert asset in supported
@@ -83,43 +94,12 @@ class PriceDataProvider:
         """
         asset = str(validator_request.asset)
 
-        prices = []
-
-        if asset in self.HYPERLIQUID_SYMBOL_MAP:
+        if asset in self.BINANCE_ASSET_MAP:
+            prices = self.fetch_data_binance(validator_request)
+        elif asset in self.HYPERLIQUID_ASSET_MAP:
             prices = self.fetch_data_hyperliquid(validator_request)
         else:
-            start_time_int = from_iso_to_unix_time(
-                validator_request.start_time.isoformat()
-            )
-            last_grid_timestamp = (
-                start_time_int + validator_request.time_length
-            )
-            params = {
-                "symbol": self.PYTH_SYMBOL_MAP[asset],
-                "resolution": 1,
-                "from": start_time_int,
-                # Fetch one extra minute past the last grid point so we
-                # can verify that candle has closed before scoring with it.
-                "to": last_grid_timestamp + self.CANDLE_INTERVAL_SECONDS,
-            }
-
-            response = requests.get(self.PYTH_PRO_URL, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            self._assert_settled(
-                data,
-                asset,
-                validator_request.id,
-                last_grid_timestamp,
-            )
-
-            prices = self._transform_data(
-                data,
-                start_time_int,
-                int(validator_request.time_increment),
-                int(validator_request.time_length),
-            )
+            prices = self.fetch_data_pyth(validator_request)
 
         if not prices or np.isnan(prices[-1]):
             bt.logging.warning(
@@ -144,6 +124,139 @@ class PriceDataProvider:
             time_increment=int(validator_request.time_increment),
         )
 
+    def fetch_data_binance(self, validator_request: ValidatorRequest) -> list:
+        start_time_int = from_iso_to_unix_time(
+            validator_request.start_time.isoformat()
+        )
+        return self.download_binance_price_data(
+            beginning=start_time_int,
+            end=start_time_int + int(validator_request.time_length),
+            symbol=str(validator_request.asset),
+            time_increment=int(validator_request.time_increment),
+        )
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_random_exponential(multiplier=2),
+        reraise=True,
+        before=before_log(bt.logging._logger, logging.DEBUG),
+    )
+    def download_binance_price_data(
+        self,
+        beginning: int,  # Unix timestamp in seconds
+        end: int,  # Unix timestamp in seconds
+        symbol: str,
+        time_increment: int = 60,
+        loop_wait_time_seconds: float = 0.1,
+    ) -> list:
+        MAX_KLINES = 1000
+        INTERVAL_MS = 60 * 1000  # 1 minute in ms
+        chunk_ms = MAX_KLINES * INTERVAL_MS
+
+        beginning_ms = beginning * 1000
+        end_ms = end * 1000
+        # Settlement guard: extend the request by one extra minute so we
+        # can verify the kline at `end_ms` has closed. Binance prints
+        # klines eagerly every minute (even with zero trades), so the
+        # witness semantics match the Hyperliquid path.
+        settlement_witness_ms = end_ms + self.CANDLE_INTERVAL_SECONDS * 1000
+        klines = []
+        saw_settled_witness = False
+
+        with requests.Session() as session:
+            current_start = beginning_ms
+            while current_start < settlement_witness_ms:
+                current_end = min(
+                    current_start + chunk_ms - INTERVAL_MS,
+                    settlement_witness_ms,
+                )
+
+                params = {
+                    "symbol": self.BINANCE_ASSET_MAP[symbol],
+                    "interval": "1m",
+                    "startTime": current_start,
+                    "endTime": current_end,
+                    "limit": MAX_KLINES,
+                }
+
+                response = session.get(
+                    self.BINANCE_SPOT_URL, params=params, timeout=30
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                bt.logging.debug(
+                    f"Fetched {len(data)} klines for {symbol} [{current_start}, {current_end}]"
+                )
+
+                for kline in data:
+                    t = int(kline[0])  # open time in ms
+                    if beginning_ms <= t <= end_ms:
+                        klines.append(kline)
+                    if t > end_ms:
+                        saw_settled_witness = True
+
+                current_start += chunk_ms
+                time.sleep(loop_wait_time_seconds)
+
+        if not saw_settled_witness:
+            bt.logging.warning(
+                f"realized path not yet settled for asset {symbol}: no "
+                f"Binance kline with open time > {end_ms} ms"
+            )
+            raise ValueError(
+                f"realized path not yet settled for asset {symbol}"
+            )
+
+        if not klines:
+            bt.logging.warning(f"No data returned from Binance for {symbol}")
+            return []
+
+        normalized = {
+            "t": [int(kline[0]) // 1000 for kline in klines],
+            "c": [float(kline[4]) for kline in klines],
+        }
+        return self._transform_data(
+            normalized, beginning, time_increment, end - beginning
+        )
+
+    def fetch_data_pyth(self, validator_request: ValidatorRequest) -> list:
+        """Rollout-tail path for in-flight SPYX requests — see
+        PYTH_SYMBOL_MAP."""
+        asset = str(validator_request.asset)
+        start_time_int = from_iso_to_unix_time(
+            validator_request.start_time.isoformat()
+        )
+        last_grid_timestamp = start_time_int + int(
+            validator_request.time_length
+        )
+        params = {
+            "symbol": self.PYTH_SYMBOL_MAP[asset],
+            "resolution": 1,
+            "from": start_time_int,
+            # Fetch one extra minute past the last grid point so we
+            # can verify that candle has closed before scoring with it.
+            "to": last_grid_timestamp + self.CANDLE_INTERVAL_SECONDS,
+        }
+
+        response = requests.get(self.PYTH_PRO_URL, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        self._assert_settled(
+            data,
+            asset,
+            validator_request.id,
+            last_grid_timestamp,
+        )
+
+        return self._transform_data(
+            data,
+            start_time_int,
+            int(validator_request.time_increment),
+            int(validator_request.time_length),
+        )
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=2),
@@ -154,7 +267,7 @@ class PriceDataProvider:
         self,
         beginning: int,  # Unix timestamp in seconds
         end: int,  # Unix timestamp in seconds
-        symbol: str = "WTIOIL",
+        symbol: str,
         time_increment: int = 60,
         loop_wait_time_seconds: float = 0.1,
     ) -> list:
@@ -164,8 +277,8 @@ class PriceDataProvider:
 
         beginning_ms = beginning * 1000
         end_ms = end * 1000
-        # Same settlement guard as the Pyth path: extend the request by one
-        # extra minute so we can verify the candle at `end_ms` has closed.
+        # Settlement guard: extend the request by one extra minute so we
+        # can verify the candle at `end_ms` has closed.
         settlement_witness_ms = end_ms + self.CANDLE_INTERVAL_SECONDS * 1000
         candles = []
         saw_settled_witness = False
@@ -180,7 +293,7 @@ class PriceDataProvider:
                 payload = {
                     "type": "candleSnapshot",
                     "req": {
-                        "coin": self.HYPERLIQUID_SYMBOL_MAP[symbol],
+                        "coin": self.HYPERLIQUID_ASSET_MAP[symbol],
                         "interval": "1m",
                         "startTime": current_start,
                         "endTime": current_end,

@@ -15,10 +15,11 @@ from synth.db.models import Miner
 def recent_start_time(hours_ago: int = 25) -> str:
     """Return an ISO start_time `hours_ago` hours before now (minute-aligned).
 
-    Live tests against the Pyth Pro Router can only query its rolling
-    history window, so hardcoded dates from months ago return empty data
-    and trip the settlement guard. Tests that exercise the full scoring
-    path call this to pick a window the router still serves.
+    Live tests against Hyperliquid can only query its rolling history
+    window (~5000 1m candles, ~3.5 days), so hardcoded dates from months
+    ago return empty data and trip the settlement guard. Tests that
+    exercise the full scoring path call this to pick a window the API
+    still serves.
     """
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     return (now - timedelta(hours=hours_ago)).isoformat()
@@ -47,7 +48,7 @@ def prepare_random_predictions(db_engine: Engine, start_time: str):
             connection.execute(insert_stmt_validator)
 
     simulation_input = SimulationInput(
-        asset="BTC",
+        asset="HYPE",
         start_time=start_time,
         time_increment=300,
         time_length=86400,

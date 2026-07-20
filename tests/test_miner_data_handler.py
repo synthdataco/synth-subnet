@@ -381,7 +381,7 @@ def test_set_get_scores(db_engine: Engine):
     handler, _, _ = prepare_random_predictions(db_engine, start_time)
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7, 86400, ["BTC"]
+        scored_time, 7, 86400, ["HYPE"]
     )
     assert validator_requests is not None
     assert len(validator_requests) == 1
@@ -403,7 +403,7 @@ def test_set_get_scores(db_engine: Engine):
         scored_time=scored_time,
         window_days=4,
         time_length=86400,
-        asset_list=["BTC"],
+        asset_list=["HYPE"],
     )
 
     assert not miner_scores_df.empty
@@ -432,7 +432,7 @@ def test_set_get_scores(db_engine: Engine):
         scored_time=scored_time,
         window_days=4,
         time_length=86400,
-        asset_list=["BTC"],
+        asset_list=["HYPE"],
     )
 
     assert not old_key_df.empty
@@ -515,7 +515,7 @@ def test_set_miner_scores_upsert_preserves_individual_values(
     )
 
     validator_requests = handler.get_validator_requests_to_score(
-        scored_time, 7, 86400, ["BTC"]
+        scored_time, 7, 86400, ["HYPE"]
     )
     assert len(validator_requests) >= 1
 

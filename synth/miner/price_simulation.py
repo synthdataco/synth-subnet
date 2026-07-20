@@ -11,55 +11,42 @@ from tenacity import (
     wait_random_exponential,
 )
 
-# Hermes Pyth API documentation: https://hermes.pyth.network/docs/
-# Pyth Lazer https://docs.pyth.network/price-feeds/pro/api/rest#post-v1latest_price
-# If env: PYTH_API_KEY=<api key> is set, the miner will use Pyth Lazer instead of Hermes for assets with a Lazer feed.
-
-TOKEN_MAP = {
-    "BTC": "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
-    "ETH": "ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace",
-    "XAU": "44465e17d2e9d390e70c999d5a11fda4f092847fcd2e3e5aa089d96c98a30e67",
-    "SOL": "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
-    "SPYX": "2817b78438c769357182c04346fddaad1178c82f4048828fe0997c3c64624e14",
-    "NVDAX": "4244d07890e4610f46bbde67de8f43a4bf8b569eebe904f136b469f148503b7f",
-    "TSLAX": "47a156470288850a440df3a6ce85a55917b813a19bb5b31128a33a986566a362",
-    "AAPLX": "978e6cc68a119ce066aa830017318563a9ed04ec3a0a6439010fc11296a58675",
-    "GOOGLX": "b911b0329028cd0283e4259c33809d62942bd2716a58084e5f31d64c00b5424e",
-    "XRP": "ec5d399846a9209f3fe5881d70aae9268c94339ff9817e8d18ff19fa05eea1c8",
-    "HYPE": "4279e31cc369bbcc2faf022b382b080e32a8e689ff20fbc530d2a603eb6cd98b",
-    "WTIOIL": "67784f72e95ac01337edb7d7bd5bbd1c03669101b7068a620df228ed4e52ef14",
+BINANCE_ASSET_MAP = {
+    "BTC": "BTCUSDT",
+    "ETH": "ETHUSDT",
+    "SOL": "SOLUSDT",
+    "XRP": "XRPUSDT",
 }
 
-# Lazer u32 feed IDs sourced from https://pyth.dourolabs.app/v1/symbols by
-# matching each asset's hermes_id.
-LAZER_FEED_ID_MAP: dict[str, int] = {
-    "BTC": 1,
-    "ETH": 2,
-    "SOL": 6,
-    "XRP": 14,
-    "HYPE": 110,
-    "XAU": 172,
-    "AAPLX": 1792,
-    "GOOGLX": 1808,
-    "NVDAX": 1833,
-    "SPYX": 1843,
-    "TSLAX": 1847,
-}
-
-# Hyperliquid `coin` codes for assets that have no usable Pyth feed.
 HYPERLIQUID_ASSET_MAP = {
-    "WTIOIL": "xyz:CL",
+    # HL spot HYPE/USDC (spot coins are addressed by `@<index>`).
+    "HYPE": "@107",
+    "XAU": "xyz:GOLD",
+    "NVDAX": "xyz:NVDA",
+    "TSLAX": "xyz:TSLA",
+    "AAPLX": "xyz:AAPL",
+    "GOOGLX": "xyz:GOOGL",
+    "SP500": "xyz:SP500",
     "SPCX": "xyz:SPCX",
+    "WTIOIL": "xyz:CL",
 }
 
-# `fixed_rate@200ms` meets every feed's min_channel (crypto majors accept
-# `real_time`, but stocks/metals/commodities require `fixed_rate@200ms` or
-# slower). Using one channel for every feed keeps the request body simple.
-LAZER_CHANNEL = "fixed_rate@200ms"
+# SPYX is retired (replaced by SP500) but not-yet-upgraded validators may
+# still prompt it during the rollout. This Pyth Hermes path exists only
+# for that tail — delete it together with the validator's SPYX support.
+TOKEN_MAP = {
+    "SPYX": "2817b78438c769357182c04346fddaad1178c82f4048828fe0997c3c64624e14",
+}
 
-pyth_base_url = "https://hermes.pyth.network/v2/updates/price/latest"
-lazer_base_url = "https://pyth-lazer.dourolabs.app/v1/latest_price"
 hyperliquid_base_url = "https://api.hyperliquid.xyz/info"
+# BINANCE_API_HOST is a process-env escape hatch (read at import time):
+# api.binance.com returns HTTP 451 from geo-restricted regions, e.g. the
+# US-hosted CI runners, which use data-api.binance.vision instead.
+binance_ticker_url = (
+    os.environ.get("BINANCE_API_HOST", "https://api.binance.com")
+    + "/api/v3/ticker/price"
+)
+pyth_base_url = "https://hermes.pyth.network/v2/updates/price/latest"
 
 
 def _fetch_price_hermes(asset: str) -> float | None:
@@ -80,37 +67,17 @@ def _fetch_price_hermes(asset: str) -> float | None:
     return live_price
 
 
-def _fetch_price_lazer(asset: str, api_key: str) -> float | None:
-    payload = {
-        "channel": LAZER_CHANNEL,
-        "priceFeedIds": [LAZER_FEED_ID_MAP[asset]],
-        "properties": ["price", "exponent"],
-        "formats": [],
-        "parsed": True,
-        "jsonBinaryEncoding": "hex",
-    }
-    response = requests.post(
-        lazer_base_url,
-        json=payload,
-        headers={"Authorization": f"Bearer {api_key}"},
+def _fetch_price_binance(asset: str) -> float | None:
+    response = requests.get(
+        binance_ticker_url,
+        params={"symbol": BINANCE_ASSET_MAP[asset]},
+        timeout=30,
     )
     if response.status_code != 200:
-        print("Error in response of Pyth Lazer API")
+        print("Error in response of Binance API")
         return None
 
-    data = response.json()
-    feeds = (data.get("parsed") or {}).get("priceFeeds") or []
-    if not feeds:
-        return None
-
-    feed = feeds[0]
-    price_mantissa = feed.get("price")
-    expo = feed.get("exponent")
-    if price_mantissa is None or expo is None:
-        return None
-
-    live_price: float = float(price_mantissa) * (10 ** int(expo))
-    return live_price
+    return float(response.json()["price"])
 
 
 def _fetch_price_hyperliquid(asset: str) -> float | None:
@@ -142,11 +109,10 @@ def _fetch_price_hyperliquid(asset: str) -> float | None:
     reraise=True,
 )
 def get_asset_price(asset="BTC") -> float | None:
+    if asset in BINANCE_ASSET_MAP:
+        return _fetch_price_binance(asset)
     if asset in HYPERLIQUID_ASSET_MAP:
         return _fetch_price_hyperliquid(asset)
-    api_key = os.environ.get("PYTH_API_KEY")
-    if asset in LAZER_FEED_ID_MAP and api_key:
-        return _fetch_price_lazer(asset, api_key)
     return _fetch_price_hermes(asset)
 
 

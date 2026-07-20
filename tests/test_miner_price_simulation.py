@@ -1,67 +1,53 @@
-import os
 import unittest
 from unittest.mock import patch, MagicMock
 
 from synth.miner import price_simulation
 from synth.miner.price_simulation import (
+    BINANCE_ASSET_MAP,
     HYPERLIQUID_ASSET_MAP,
-    LAZER_FEED_ID_MAP,
     TOKEN_MAP,
     get_asset_price,
 )
 
+from synth.validator.price_data_provider import PriceDataProvider
+
 
 class TestGetAssetPriceHermes(unittest.TestCase):
-    def test_without_api_key_reads_hermes(self):
-        # No PYTH_API_KEY -> the keyless Hermes endpoint, even for assets
-        # that also have a Lazer feed.
+    def test_spyx_reads_hermes(self):
+        assert "SPYX" not in HYPERLIQUID_ASSET_MAP
+        assert "SPYX" in TOKEN_MAP
+
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "parsed": [{"price": {"price": "7930115688547", "expo": "-8"}}]
+            "parsed": [{"price": {"price": "75431800000", "expo": "-8"}}]
         }
-        with patch.dict("os.environ", {}, clear=False):
-            os.environ.pop("PYTH_API_KEY", None)
-            with patch("requests.get", return_value=mock_resp) as mock_get:
-                price = get_asset_price("BTC")
-                called_url = mock_get.call_args[0][0]
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            price = get_asset_price("SPYX")
+            called_url = mock_get.call_args[0][0]
 
         assert called_url == price_simulation.pyth_base_url
-        assert price == 79301.15688547
+        assert price == 754.318
 
 
-class TestGetAssetPriceLazer(unittest.TestCase):
-    def test_with_api_key_posts_lazer_with_bearer(self):
-        # PYTH_API_KEY present -> Lazer (paid) for assets with a Lazer feed.
+class TestGetAssetPriceBinance(unittest.TestCase):
+    def test_crypto_major_routes_to_binance_ticker(self):
+        assert "BTC" not in HYPERLIQUID_ASSET_MAP
+        assert BINANCE_ASSET_MAP["BTC"] == "BTCUSDT"
+
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "parsed": {
-                "priceFeeds": [
-                    {
-                        "priceFeedId": LAZER_FEED_ID_MAP["BTC"],
-                        "price": "7930115688547",
-                        "exponent": -8,
-                    }
-                ]
-            }
+            "symbol": "BTCUSDT",
+            "price": "63128.00",
         }
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            price = get_asset_price("BTC")
 
-        with patch.dict("os.environ", {"PYTH_API_KEY": "test-token"}):
-            with patch("requests.post", return_value=mock_resp) as mock_post:
-                price = get_asset_price("BTC")
-
-        assert price == 79301.15688547
-
-        called_url = mock_post.call_args[0][0]
-        assert called_url == price_simulation.lazer_base_url
-
-        kwargs = mock_post.call_args.kwargs
-        assert kwargs["headers"] == {"Authorization": "Bearer test-token"}
-        body = kwargs["json"]
-        assert body["channel"] == "fixed_rate@200ms"
-        assert body["priceFeedIds"] == [LAZER_FEED_ID_MAP["BTC"]]
-        assert body["parsed"] is True
+        assert price == 63128.0
+        called_url = mock_get.call_args[0][0]
+        assert called_url == price_simulation.binance_ticker_url
+        assert mock_get.call_args.kwargs["params"] == {"symbol": "BTCUSDT"}
 
 
 class TestGetAssetPriceHyperliquid(unittest.TestCase):
@@ -75,51 +61,40 @@ class TestGetAssetPriceHyperliquid(unittest.TestCase):
         ]
         return mock_resp
 
+    def _assert_routes_to_hyperliquid(self, asset: str, coin: str, close: str):
+        resp = self._candles_resp(close)
+        with patch("requests.post", return_value=resp) as mock_post:
+            price = get_asset_price(asset)
+
+        assert price == float(close)
+
+        called_url = mock_post.call_args[0][0]
+        assert called_url == price_simulation.hyperliquid_base_url
+        body = mock_post.call_args.kwargs["json"]
+        assert body["type"] == "candleSnapshot"
+        assert body["req"]["coin"] == coin
+        assert body["req"]["interval"] == "1m"
+
+    def test_hype_routes_to_hyperliquid_spot(self):
+        self._assert_routes_to_hyperliquid("HYPE", "@107", "60.10")
+
+    def test_equity_routes_to_xyz_dex(self):
+        self._assert_routes_to_hyperliquid("NVDAX", "xyz:NVDA", "206.70")
+
+    def test_sp500_routes_to_xyz_dex(self):
+        self._assert_routes_to_hyperliquid("SP500", "xyz:SP500", "7523.0")
+
     def test_wtioil_routes_to_hyperliquid(self):
-        # WTIOIL has no usable Lazer feed; the miner pulls it from
-        # Hyperliquid (same coin the validator scores against), key or not.
-        assert "WTIOIL" not in LAZER_FEED_ID_MAP
-        assert HYPERLIQUID_ASSET_MAP["WTIOIL"] == "xyz:CL"
+        self._assert_routes_to_hyperliquid("WTIOIL", "xyz:CL", "65.00")
 
-        resp = self._candles_resp("65.00")
-        with patch.dict("os.environ", {"PYTH_API_KEY": "test-token"}):
-            with patch("requests.get") as mock_get:
-                with patch("requests.post", return_value=resp) as mock_post:
-                    price = get_asset_price("WTIOIL")
+    def test_spcx_routes_to_hyperliquid(self):
+        self._assert_routes_to_hyperliquid("SPCX", "xyz:SPCX", "187.08")
 
-        assert price == 65.0
-
-        # Hyperliquid hit, neither Hermes nor Lazer touched.
-        mock_get.assert_not_called()
-        called_url = mock_post.call_args[0][0]
-        assert called_url == price_simulation.hyperliquid_base_url
-        body = mock_post.call_args.kwargs["json"]
-        assert body["type"] == "candleSnapshot"
-        assert body["req"]["coin"] == "xyz:CL"
-        assert body["req"]["interval"] == "1m"
-
-    def test_spcx_routes_to_hyperliquid_even_with_key(self):
-        # SPCX is not on Hermes and has no Lazer feed — it exists only on
-        # Hyperliquid, so it must resolve there regardless of PYTH_API_KEY.
-        assert "SPCX" not in TOKEN_MAP
-        assert "SPCX" not in LAZER_FEED_ID_MAP
-        assert HYPERLIQUID_ASSET_MAP["SPCX"] == "xyz:SPCX"
-
-        resp = self._candles_resp("187.08")
-        with patch.dict("os.environ", {"PYTH_API_KEY": "test-token"}):
-            with patch("requests.get") as mock_get:
-                with patch("requests.post", return_value=resp) as mock_post:
-                    price = get_asset_price("SPCX")
-
-        assert price == 187.08
-
-        mock_get.assert_not_called()
-        called_url = mock_post.call_args[0][0]
-        assert called_url == price_simulation.hyperliquid_base_url
-        body = mock_post.call_args.kwargs["json"]
-        assert body["type"] == "candleSnapshot"
-        assert body["req"]["coin"] == "xyz:SPCX"
-        assert body["req"]["interval"] == "1m"
+    def test_maps_match_validator(self):
+        # Miners must fetch spot from the exact feed the validator scores
+        # against.
+        assert HYPERLIQUID_ASSET_MAP == PriceDataProvider.HYPERLIQUID_ASSET_MAP
+        assert BINANCE_ASSET_MAP == PriceDataProvider.BINANCE_ASSET_MAP
 
 
 if __name__ == "__main__":
