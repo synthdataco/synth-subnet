@@ -2,6 +2,7 @@
 
 ## Unreleased — scheduled for 2026-07-23
 
+- Emission burn removed: so 100% of miner emission goes to miners again (the owner had taken ~50% since 2025-10-17).
 - Price feeds migrate off Pyth: validator ground-truth candles and the reference miner's spot price now come from **Binance spot** for BTC/ETH/SOL/XRP (`BTCUSDT`, …), **Hyperliquid spot** for HYPE (`HYPE/USDC`), and **Hyperliquid perps** for equities/commodities (`xyz:*`). The reference miner no longer uses `PYTH_API_KEY`, Pyth Lazer, or Pyth Hermes (Hermes remains only to serve SPYX prompts from not-yet-upgraded validators during the rollout)
 - SPYX (tokenized SPY, Pyth) is retired and replaced by a new asset **SP500** (S&P 500 index, Hyperliquid `xyz:SP500`, ~10x SPYX's price level) in the Commodities/Equities 24h competition. Prompting swaps at deploy; in-flight SPYX requests are still scored from Pyth and SPYX scores age out of the 10-day moving-average window naturally. SP500 inherits SPYX's rolling-average weight (`3.437935601155441`)
 - Validator: optional Pub/Sub notification for stored prediction cohorts.
