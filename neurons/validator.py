@@ -341,25 +341,6 @@ class Validator(BaseValidatorNeuron):
         # into bittensor consensus calculation
         # ========================================== #
 
-        moving_averages_data.append(
-            {
-                "miner_id": 0,
-                "miner_uid": (
-                    23 if self.config.subtensor.network == "test" else 248
-                ),
-                "smoothed_score": 0,
-                "reward_weight": sum(
-                    [r["reward_weight"] for r in moving_averages_data]
-                ),
-                "updated_at": scored_time.isoformat(),
-            }
-        )
-
-        bt.logging.info(
-            f"Moving averages data for owner: {moving_averages_data[-1]}",
-            "forward_score",
-        )
-
         send_weights_to_bittensor_and_update_weights_history(
             base_neuron=self,
             moving_averages_data=moving_averages_data,
