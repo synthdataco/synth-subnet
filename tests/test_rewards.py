@@ -2,12 +2,14 @@ import numpy as np
 import pytest
 from numpy.testing import assert_almost_equal
 from datetime import datetime, timedelta
+from multiprocessing import shared_memory
 
 from sqlalchemy import delete
 
 from synth.db.models import MinerPrediction, ValidatorRequest, MinerScore
 from synth.validator.price_data_provider import PriceDataProvider
 from synth.validator.reward import (
+    _crps_worker,
     compute_prompt_scores,
     compute_softmax,
     get_rewards_multiprocess,
@@ -71,6 +73,56 @@ def test_compute_prompt_scores_only_one_miner():
     assert percentile95 == 1000
     assert lowest_score == 1000
     assert np.array_equal(actual_score, expected_prompt_scores)
+
+
+def test_crps_worker_drops_non_finite_detailed_data():
+    # A path whose relative change overflows float64 makes the CRPS
+    # non-finite. The worker must not hand that back as detailed data:
+    # set_miner_scores writes it as JSONB, which has no NaN/Infinity.
+    real_prices = np.array([100.0, 101.0, 102.0, 103.0])
+    shm = shared_memory.SharedMemory(create=True, size=real_prices.nbytes)
+    try:
+        shared_prices = np.ndarray(
+            real_prices.shape, dtype=np.float64, buffer=shm.buf
+        )
+        shared_prices[:] = real_prices[:]
+
+        prediction = [
+            int(datetime.now().timestamp()),
+            300,
+            [100.0, 5e-324, 1e300, 103.0],
+            [100.0, 101.0, 102.0, 103.0],
+        ]
+
+        (
+            miner_uid,
+            score,
+            detailed_crps_data,
+            error,
+            _,
+            _,
+            _,
+        ) = _crps_worker(
+            (
+                42,
+                prediction,
+                shm.name,
+                real_prices.shape,
+                300,
+                {"5min": 300, "20min_abs": 1200},
+                "CORRECT",
+                1,
+                0.0,
+            )
+        )
+    finally:
+        shm.close()
+        shm.unlink()
+
+    assert miner_uid == 42
+    assert score == -1
+    assert detailed_crps_data == []
+    assert "non-finite score" in error
 
 
 def test_get_rewards(db_engine):

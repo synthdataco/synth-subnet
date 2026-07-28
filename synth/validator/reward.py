@@ -105,12 +105,17 @@ def _crps_worker(args):
                 scoring_intervals,
             )
 
-            if np.isnan(score):
+            if not np.isfinite(score):
+                # A non-finite total means at least one interval is non-finite
+                # too, so the detailed data goes with the score: JSONB has no
+                # NaN/Infinity, and score_details_v3 is written for every
+                # miner in one INSERT, so one such row fails the whole prompt.
                 return (
                     miner_uid,
                     -1,
-                    detailed_crps_data,
-                    f"Error calculating CRPS for miner {miner_uid}",
+                    [],
+                    f"Error calculating CRPS for miner {miner_uid}: "
+                    f"non-finite score {score}",
                     format_validation,
                     prediction_id,
                     process_time,

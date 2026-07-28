@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import math
+import struct
 
 from synth.simulation_input import SimulationInput
 from synth.validator.response_validation_v2 import validate_responses, CORRECT
@@ -266,7 +267,8 @@ def test_validate_responses_correct_2():
 
 def _reference_point_verdict(point):
     """The per-point rule, restated verbatim as the oracle: int/float
-    (bools excluded), finite, at most 8 significant digits."""
+    (bools excluded), finite, float32-representable, at most 8 significant
+    digits."""
     if isinstance(point, bool) or not isinstance(point, (int, float)):
         return f"Price format is incorrect: expected int or float, got {type(point)}"
     try:
@@ -275,6 +277,12 @@ def _reference_point_verdict(point):
         return f"Price format is incorrect: too many digits {point}"
     if not math.isfinite(value):
         return f"Price format is incorrect: non-finite value {point}"
+    try:
+        as_float32 = struct.unpack("<f", struct.pack("<f", value))[0]
+    except OverflowError:
+        return f"Price format is incorrect: exceeds float32 range {point}"
+    if as_float32 == 0.0 and value != 0.0:
+        return f"Price format is incorrect: underflows float32 {point}"
     if float(f"{value:.7e}") != value:
         return f"Price format is incorrect: too many digits {point}"
     return None
@@ -319,10 +327,18 @@ _DIGIT_RULE_EDGE_CASES = [
     # float artefacts and extremes (outside the provable band -> fallback)
     0.1 + 0.2,  # 0.30000000000000004 -> invalid
     2**53 + 1.0,  # 16 sig digits -> invalid
-    5e-324,
+    5e-324,  # underflows float32 -> invalid
     1e-20,  # 1 sig digit -> valid, below the provable band
     1e20,  # 1 sig digit -> valid, above the provable band
     10**400,  # int beyond float64 range -> rejected, must not crash
+    # float32 range
+    3.4e38,  # just under float32 max -> valid
+    3.5e38,  # invalid
+    1e39,  # invalid
+    -1e39,  # invalid
+    1e300,  # invalid
+    1e-45,  # rounds to the smallest subnormal -> valid
+    1e-300,  # collapses to 0 -> invalid
 ]
 
 
@@ -365,6 +381,20 @@ def test_non_finite_points_are_rejected():
     )
     result = validate_responses(response, simulation_input, "0")
     assert result == "Price format is incorrect: non-finite value nan"
+
+
+def test_point_beyond_float32_range_is_rejected():
+    response, simulation_input = _single_path_response([123.45, 1e39, 123.45])
+    result = validate_responses(response, simulation_input, "0")
+    assert result == "Price format is incorrect: exceeds float32 range 1e+39"
+
+
+def test_point_that_underflows_float32_is_rejected():
+    response, simulation_input = _single_path_response(
+        [123.45, 1e-300, 123.45]
+    )
+    result = validate_responses(response, simulation_input, "0")
+    assert result == "Price format is incorrect: underflows float32 1e-300"
 
 
 def test_non_numeric_point_in_mixed_paths():

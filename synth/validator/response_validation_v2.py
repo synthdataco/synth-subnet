@@ -1,5 +1,6 @@
 from datetime import datetime
 import math
+import struct
 import typing
 
 import numpy as np
@@ -12,9 +13,10 @@ MAX_SIGNIFICANT_DIGITS = 8
 
 
 def _point_error(point) -> typing.Optional[str]:
-    """The rule, per point: an int or float (bools excluded), finite, with
-    at most MAX_SIGNIFICANT_DIGITS significant digits — i.e. the value
-    round-trips through its 8-significant-digit decimal form."""
+    """The rule, per point: an int or float (bools excluded), finite,
+    representable as float32, with at most MAX_SIGNIFICANT_DIGITS significant
+    digits — i.e. the value round-trips through its 8-significant-digit
+    decimal form."""
     if isinstance(point, bool) or not isinstance(point, (int, float)):
         return f"Price format is incorrect: expected int or float, got {type(point)}"
 
@@ -25,6 +27,16 @@ def _point_error(point) -> typing.Optional[str]:
 
     if not math.isfinite(value):
         return f"Price format is incorrect: non-finite value {point}"
+
+    # Predictions are stored as float32: out of range reads back as inf, too
+    # small collapses to 0.
+    try:
+        as_float32 = struct.unpack("<f", struct.pack("<f", value))[0]
+    except OverflowError:
+        return f"Price format is incorrect: exceeds float32 range {point}"
+
+    if as_float32 == 0.0 and value != 0.0:
+        return f"Price format is incorrect: underflows float32 {point}"
 
     if float(f"{value:.{MAX_SIGNIFICANT_DIGITS - 1}e}") != value:
         return f"Price format is incorrect: too many digits {point}"
@@ -41,6 +53,9 @@ def _sig_digits_pass_mask(matrix: np.ndarray) -> np.ndarray:
     powers of ten are used (negative ones are not exact in float64), so
     the equality is exact — and the [1e-14, 1e14] band plus the mantissa
     cap keep it exact even if log10 is off by one at a decade boundary.
+
+    The band sits inside float32 range, so proven points need no float32
+    check; widening it means revisiting that.
     """
     if matrix.dtype.kind != "f":
         matrix = matrix.astype(np.float64)
