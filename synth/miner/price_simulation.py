@@ -31,13 +31,6 @@ HYPERLIQUID_ASSET_MAP = {
     "WTIOIL": "xyz:CL",
 }
 
-# SPYX is retired (replaced by SP500) but not-yet-upgraded validators may
-# still prompt it during the rollout. This Pyth Hermes path exists only
-# for that tail — delete it together with the validator's SPYX support.
-TOKEN_MAP = {
-    "SPYX": "2817b78438c769357182c04346fddaad1178c82f4048828fe0997c3c64624e14",
-}
-
 hyperliquid_base_url = "https://api.hyperliquid.xyz/info"
 # BINANCE_API_HOST is a process-env escape hatch (read at import time):
 # api.binance.com returns HTTP 451 from geo-restricted regions, e.g. the
@@ -46,25 +39,6 @@ binance_ticker_url = (
     os.environ.get("BINANCE_API_HOST", "https://api.binance.com")
     + "/api/v3/ticker/price"
 )
-pyth_base_url = "https://hermes.pyth.network/v2/updates/price/latest"
-
-
-def _fetch_price_hermes(asset: str) -> float | None:
-    pyth_params = {"ids[]": [TOKEN_MAP[asset]]}
-    response = requests.get(pyth_base_url, params=pyth_params)
-    if response.status_code != 200:
-        print("Error in response of Pyth API")
-        return None
-
-    data = response.json()
-    parsed_data = data.get("parsed", [])
-
-    feed = parsed_data[0]
-    price = int(feed["price"]["price"])
-    expo = int(feed["price"]["expo"])
-
-    live_price: float = price * (10**expo)
-    return live_price
 
 
 def _fetch_price_binance(asset: str) -> float | None:
@@ -113,7 +87,7 @@ def get_asset_price(asset="BTC") -> float | None:
         return _fetch_price_binance(asset)
     if asset in HYPERLIQUID_ASSET_MAP:
         return _fetch_price_hyperliquid(asset)
-    return _fetch_price_hermes(asset)
+    raise ValueError(f"unsupported asset {asset}")
 
 
 def simulate_single_price_path(

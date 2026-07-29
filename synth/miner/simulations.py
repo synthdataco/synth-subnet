@@ -11,10 +11,8 @@ SIGMA_MAP = {
     "ETH": 0.00766,
     "XAU": 0.00312,
     "SOL": 0.00858,
-    # SP500 inherits SPYX's sigma (index vol == tokenized-SPY vol).
-    # SPYX stays for the rollout tail — remove with the Pyth code path.
+    # SP500 inherits the former SPYX sigma (index vol == tokenized-SPY vol).
     "SP500": 0.00157,
-    "SPYX": 0.00157,
     "NVDAX": 0.00338,
     "TSLAX": 0.00337,
     "AAPLX": 0.00259,

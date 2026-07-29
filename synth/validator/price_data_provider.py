@@ -28,11 +28,6 @@ class PriceDataProvider:
         + "/api/v3/klines"
     )
 
-    PYTH_PRO_URL = "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
-    PYTH_SYMBOL_MAP = {
-        "SPYX": "Crypto.SPYX/USD",
-    }
-
     # Hyperliquid serves 1-minute candles indexed by their open
     # timestamp; the candle at T is only final once time has passed T + 60s.
     # `CANDLE_INTERVAL_SECONDS` is the *structural* offset — exactly one
@@ -74,7 +69,6 @@ class PriceDataProvider:
         supported = (
             PriceDataProvider.BINANCE_ASSET_MAP.keys()
             | PriceDataProvider.HYPERLIQUID_ASSET_MAP.keys()
-            | PriceDataProvider.PYTH_SYMBOL_MAP.keys()
         )
         for asset in asset_list:
             assert asset in supported
@@ -99,7 +93,9 @@ class PriceDataProvider:
         elif asset in self.HYPERLIQUID_ASSET_MAP:
             prices = self.fetch_data_hyperliquid(validator_request)
         else:
-            prices = self.fetch_data_pyth(validator_request)
+            raise ValueError(
+                f"unsupported asset {asset} in request {validator_request.id}"
+            )
 
         if not prices or np.isnan(prices[-1]):
             bt.logging.warning(
@@ -220,43 +216,6 @@ class PriceDataProvider:
             normalized, beginning, time_increment, end - beginning
         )
 
-    def fetch_data_pyth(self, validator_request: ValidatorRequest) -> list:
-        """Rollout-tail path for in-flight SPYX requests — see
-        PYTH_SYMBOL_MAP."""
-        asset = str(validator_request.asset)
-        start_time_int = from_iso_to_unix_time(
-            validator_request.start_time.isoformat()
-        )
-        last_grid_timestamp = start_time_int + int(
-            validator_request.time_length
-        )
-        params = {
-            "symbol": self.PYTH_SYMBOL_MAP[asset],
-            "resolution": 1,
-            "from": start_time_int,
-            # Fetch one extra minute past the last grid point so we
-            # can verify that candle has closed before scoring with it.
-            "to": last_grid_timestamp + self.CANDLE_INTERVAL_SECONDS,
-        }
-
-        response = requests.get(self.PYTH_PRO_URL, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        self._assert_settled(
-            data,
-            asset,
-            validator_request.id,
-            last_grid_timestamp,
-        )
-
-        return self._transform_data(
-            data,
-            start_time_int,
-            int(validator_request.time_increment),
-            int(validator_request.time_length),
-        )
-
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=2),
@@ -341,31 +300,6 @@ class PriceDataProvider:
         }
         return self._transform_data(
             normalized, beginning, time_increment, end - beginning
-        )
-
-    @staticmethod
-    def _assert_settled(
-        data: dict,
-        asset: str,
-        request_id,
-        last_grid_timestamp: int,
-    ) -> None:
-        """Raise if the response does not prove the final scored candle has
-        closed. The witness is any candle with timestamp strictly greater
-        than `last_grid_timestamp` — it can only exist after that grid
-        point's 1-minute candle has finished."""
-        timestamps = (data or {}).get("t") or []
-        max_t = max(timestamps) if timestamps else None
-        if max_t is not None and max_t > last_grid_timestamp:
-            return
-        bt.logging.warning(
-            f"realized path not yet settled for asset {asset} in request "
-            f"{request_id}: max candle t={max_t}, need > "
-            f"{last_grid_timestamp}"
-        )
-        raise ValueError(
-            f"realized path not yet settled for asset {asset} in request "
-            f"{request_id}"
         )
 
     @staticmethod
