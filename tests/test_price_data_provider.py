@@ -436,26 +436,6 @@ class TestSettlementGuard(unittest.TestCase):
 
         assert result == [1.0, np.nan, np.nan, 4.0]
 
-    def test_pyth_raises_when_no_candle_past_last_grid(self):
-        data = {
-            "t": [1739974320, 1739974440, 1739974560, 1739974680],
-            "c": [1.0, 2.0, 3.0, 4.0],
-        }
-        with self.assertRaises(ValueError):
-            PriceDataProvider._assert_settled(
-                data, "SPYX", "req-1", last_grid_timestamp=1739974680
-            )
-
-    def test_pyth_accepts_when_witness_candle_present(self):
-        data = {
-            "t": [1739974320, 1739974680, 1739974740],
-            "c": [1.0, 4.0, 5.0],
-        }
-        # Should not raise.
-        PriceDataProvider._assert_settled(
-            data, "SPYX", "req-1", last_grid_timestamp=1739974680
-        )
-
 
 class TestPriceDataProviderBinance(unittest.TestCase):
     """Crypto majors are scored from Binance spot 1m klines."""
@@ -518,45 +498,22 @@ class TestPriceDataProviderBinance(unittest.TestCase):
                 )
 
 
-class TestPriceDataProviderPythTail(unittest.TestCase):
-    """SPYX rollout-tail coverage: retired from prompting but in-flight
-    requests still score from Pyth Pro history until the tail ends."""
+class TestPriceDataProviderUnsupportedAsset(unittest.TestCase):
+    """With Pyth removed, an asset in neither venue map is a hard error
+    rather than a silent fall-through."""
 
-    def test_spyx_uses_pyth_pro_history(self):
-        # 1739974740 is the settlement-witness candle past the last grid
-        # point at 1739974680 (= start + time_length).
-        mock_response = {
-            "t": [
-                1739974320,
-                1739974440,
-                1739974560,
-                1739974680,
-                1739974740,
-            ],
-            "c": [100000.23, 99000.55, 103000.55, 108000.867, 108500.0],
-        }
-
-        spyx_request = ValidatorRequest(
+    def test_fetch_data_raises_for_unmapped_asset(self):
+        request = ValidatorRequest(
             asset="SPYX",
             start_time=datetime.fromisoformat("2025-02-19T14:12:00+00:00"),
             time_length=360,
             time_increment=120,
         )
-
         provider = PriceDataProvider()
-        with patch("requests.get") as mock_get:
-            mock_get.return_value.json.return_value = mock_response
-            result = provider.fetch_data(spyx_request)
-
-            called_params = mock_get.call_args.kwargs["params"]
-            assert (
-                called_params["symbol"]
-                == PriceDataProvider.PYTH_SYMBOL_MAP["SPYX"]
-            )
-            # The fetch window must extend one minute past the last grid
-            # point so the settlement witness can land in the response.
-            assert called_params["to"] == 1739974680 + 60
-            assert result == [100000.23, 99000.55, 103000.55, 108000.867]
+        # Unwrapped to skip the tenacity retries around the raise.
+        fetch = PriceDataProvider.fetch_data
+        with self.assertRaises(ValueError):
+            fetch.__wrapped__(provider, request)
 
 
 class TestPriceDataProviderLive(unittest.TestCase):
@@ -610,9 +567,3 @@ class TestPriceDataProviderLive(unittest.TestCase):
         for asset in PriceDataProvider.BINANCE_ASSET_MAP.keys():
             with self.subTest(asset=asset):
                 self._assert_live_history(provider, asset)
-
-    @unittest.skip("Pyth Pro now returns 401 without a key")
-    def test_live_history_spyx_pyth_tail(self):
-        # Rollout tail: SPYX still scores from Pyth Pro.
-        provider = PriceDataProvider()
-        self._assert_live_history(provider, "SPYX")

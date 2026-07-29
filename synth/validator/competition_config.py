@@ -17,15 +17,12 @@ class CompetitionConfig:
 COM_EQU_24H = CompetitionConfig(
     asset_list=[
         "XAU",
-        "SPYX",
         "NVDAX",
         "GOOGLX",
         "TSLAX",
         "AAPLX",
         "WTIOIL",
         "SPCX",
-        # SP500 (Hyperliquid xyz:SP500, index scale) replaces SPYX
-        # (tokenized SPY, Pyth)
         "SP500",
     ],
     label="Commodities/Equities 24h",

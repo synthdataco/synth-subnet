@@ -5,29 +5,19 @@ from synth.miner import price_simulation
 from synth.miner.price_simulation import (
     BINANCE_ASSET_MAP,
     HYPERLIQUID_ASSET_MAP,
-    TOKEN_MAP,
     get_asset_price,
 )
 
 from synth.validator.price_data_provider import PriceDataProvider
 
 
-class TestGetAssetPriceHermes(unittest.TestCase):
-    def test_spyx_reads_hermes(self):
+class TestGetAssetPriceUnsupported(unittest.TestCase):
+    def test_unmapped_asset_raises(self):
+        assert "SPYX" not in BINANCE_ASSET_MAP
         assert "SPYX" not in HYPERLIQUID_ASSET_MAP
-        assert "SPYX" in TOKEN_MAP
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "parsed": [{"price": {"price": "75431800000", "expo": "-8"}}]
-        }
-        with patch("requests.get", return_value=mock_resp) as mock_get:
-            price = get_asset_price("SPYX")
-            called_url = mock_get.call_args[0][0]
-
-        assert called_url == price_simulation.pyth_base_url
-        assert price == 754.318
+        # Unwrapped to skip the tenacity retries around the raise.
+        with self.assertRaises(ValueError):
+            get_asset_price.__wrapped__("SPYX")
 
 
 class TestGetAssetPriceBinance(unittest.TestCase):
