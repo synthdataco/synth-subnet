@@ -223,7 +223,11 @@ def compute_vhft_smoothed_score(
         return None
 
     scored = [
-        {"miner_id": uid_to_miner_id[uid], "miner_uid": uid, "rolling_avg": crps}
+        {
+            "miner_id": uid_to_miner_id[uid],
+            "miner_uid": uid,
+            "rolling_avg": crps,
+        }
         for uid, crps in vhft_scores.items()
         if uid in uid_to_miner_id
     ]
