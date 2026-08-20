@@ -733,6 +733,22 @@ class MinerDataHandler:
 
         return miner_data
 
+    def get_miner_uid_to_id_map(self) -> dict[int, int] | None:
+        """Managed {miner_uid: miner_id} for the latest identity per uid.
+
+        Used by the VHFT blend to map external per-uid scores to the Postgres
+        miner_id that combine_moving_averages merges on. None on DB failure.
+        """
+        try:
+            with self.engine.connect() as connection:
+                with connection.begin():
+                    return self.get_miner_uids_map(connection)
+        except Exception as e:
+            bt.logging.exception(
+                f"in get_miner_uid_to_id_map (got an exception): {e}"
+            )
+            return None
+
     @retry(
         stop=stop_after_attempt(5),
         wait=wait_random_exponential(multiplier=7),

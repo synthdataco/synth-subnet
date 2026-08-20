@@ -103,3 +103,24 @@ ALL_COMPETITIONS = [
     CRYPTO_24H,
     CRYPTO_1H,
 ]
+
+# VHFT (Synth Ultra) — the 10-second BTC-microprice competition. Scored OFF-subnet
+# and blended in via the external-ingestion path (vhft_score_provider +
+# compute_vhft_smoothed_score), NOT through the inline-CRPS path — so it is
+# deliberately kept OUT of ALL_COMPETITIONS. It reuses the same
+# SMOOTHED_SCORE_COEFFICIENT and softmax as the other three, so after set_weights
+# L1-normalizes, the four competitions split emissions equally (the coefficient
+# value cancels; a *shared* coefficient is what makes the split equal).
+VHFT_COMPETITION = CompetitionConfig(
+    asset_list=["BTC"],
+    label="VHFT 10s",
+    time_length=10,
+    time_increment=10,
+    scoring_intervals={"10s": 10},
+    # TODO: calibrate VHFT shaping. window_days is nominal — the external scorer
+    # already windows the scores, so no per-window aggregation happens here.
+    window_days=1,
+    # TODO: calibrate softmax_beta for the mean_crps scale. MUST stay negative
+    # (lower CRPS = higher reward), same convention as the other competitions.
+    softmax_beta=-0.15,
+)
