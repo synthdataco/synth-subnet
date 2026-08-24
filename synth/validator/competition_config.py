@@ -125,3 +125,18 @@ VHFT_COMPETITION = CompetitionConfig(
     # higher reward), same convention as the other competitions.
     softmax_beta=-0.25,
 )
+
+# Plausible size of the VHFT participant field, enforced in
+# compute_vhft_smoothed_score — outside this range the blend is skipped for the
+# cycle rather than trusted.
+#
+# The VHFT block is a fixed SMOOTHED_SCORE_COEFFICIENT however many uids share
+# it, so each participant's cut scales as 1/N: at 9 participants the top uid
+# takes ~2.8% of all emissions, at 3 it takes ~8.3%, and at 1 it takes the whole
+# 25%. A round that scores only a handful of miners — a degraded scorer, or a
+# field that has mostly dropped out — would otherwise quietly hand one miner an
+# outsized share, so require a floor. The ceiling is the other end of the same
+# argument: a snapshot naming dozens of scored participants is a malfunctioning
+# scorer rather than a competition that suddenly got popular.
+VHFT_MIN_PARTICIPANTS = 3
+VHFT_MAX_PARTICIPANTS = 64

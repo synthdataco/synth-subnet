@@ -12,6 +12,8 @@ from synth.utils.logging import print_execution_time
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.competition_config import CompetitionConfig
 from synth.validator.competition_config import SMOOTHED_SCORE_COEFFICIENT
+from synth.validator.competition_config import VHFT_MAX_PARTICIPANTS
+from synth.validator.competition_config import VHFT_MIN_PARTICIPANTS
 from synth.validator.reward import compute_softmax
 
 # Per-asset weighting coefficients for score normalization across assets.
@@ -213,7 +215,11 @@ def compute_vhft_smoothed_score(
     compute_smoothed_score, keeping shaping uniform across all four competitions.
 
     Maps uid -> miner_id (the key combine_moving_averages merges on), dropping uids
-    with no Postgres identity (unregistered). Returns None if nothing maps.
+    with no Postgres identity (unregistered). Returns None if nothing maps, or if
+    the surviving field falls outside VHFT_MIN/MAX_PARTICIPANTS — the block is a
+    fixed share however many miners split it, so too few is a concentration risk
+    and too many is a malfunctioning scorer. Either way the caller skips VHFT for
+    the cycle and the other three competitions still set weights.
     """
     if not vhft_scores:
         return None
@@ -232,6 +238,19 @@ def compute_vhft_smoothed_score(
         if uid in uid_to_miner_id
     ]
     if not scored:
+        return None
+
+    # Concentration guard. Checked AFTER the identity mapping above, on the
+    # miners that will actually be paid: 9 scored uids of which only 1 is
+    # registered concentrates exactly as hard as 1 scored uid, and a raw
+    # len(vhft_scores) check would miss that.
+    if not VHFT_MIN_PARTICIPANTS <= len(scored) <= VHFT_MAX_PARTICIPANTS:
+        bt.logging.warning(
+            f"VHFT: {len(scored)} scored participant(s) outside the plausible "
+            f"range [{VHFT_MIN_PARTICIPANTS}, {VHFT_MAX_PARTICIPANTS}] — "
+            f"skipping the VHFT blend this cycle rather than concentrating "
+            f"its share on too few miners"
+        )
         return None
 
     # Same softmax tail as compute_smoothed_score: negative beta -> lower CRPS wins.

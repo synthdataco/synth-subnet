@@ -20,6 +20,29 @@ import requests
 _DEFAULT_TIMEOUT_S = 10
 
 
+def _parse_score_row(row: typing.Any) -> typing.Optional[tuple[int, float]]:
+    """Return (uid, mean_crps) for one scored participant.
+
+    None means "not a participant this cycle" — the steady-state snapshot is 9
+    scored uids and 247 at weight 0.0, so that is the common, expected case and
+    not worth logging.
+
+    Raises TypeError/ValueError/KeyError for a row that claims participation but
+    cannot be used: a null or non-positive mean_crps, or a malformed uid/weight.
+    The caller counts those and warns, because unlike a weight-0.0 row they mean
+    the scorer sent something unexpected.
+    """
+    if float(row.get("weight") or 0.0) <= 0.0:
+        return None
+    mean_crps = row.get("mean_crps")
+    if mean_crps is None:
+        raise ValueError("null mean_crps on a positive-weight row")
+    crps = float(mean_crps)
+    if crps <= 0.0:
+        raise ValueError(f"non-positive mean_crps {crps!r}")
+    return int(row["uid"]), crps
+
+
 class VhftScoreProvider:
     def __init__(self, url: str):
         self._url = url
@@ -50,6 +73,18 @@ class VhftScoreProvider:
         is a real perfect-CRPS value). A null on a positive-weight row is dropped
         rather than coerced, and so is any row with a malformed uid/weight.
 
+        A non-positive mean_crps on a positive-weight row is ALSO dropped, and
+        that filter is load-bearing. After a restart the scorer can serve a
+        placeholder snapshot written before it has scored anything, giving every
+        uid a nonzero weight and a 0.0 CRPS. Filtering on weight alone lets that
+        through, and 0.0 reads as a *perfect* score to the lower-is-better
+        softmax downstream — i.e. the VHFT block's whole share of emissions
+        spread across every registered miner, none of whom competed. Filtering
+        on crps is what actually excludes non-participants; weight only
+        distinguishes them once the scorer has real results. A genuine 0.0 would
+        need a point-mass prediction landing exactly on the realized price for
+        every observation in the window, so dropping it costs a cycle at most.
+
         Returns None on any HTTP/parse failure or when no participants are scored,
         so the caller skips VHFT this cycle rather than crashing the scoring loop.
 
@@ -72,20 +107,17 @@ class VhftScoreProvider:
         dropped = 0
         for r in rows:
             try:
-                if float(r.get("weight") or 0.0) <= 0.0:
-                    continue
-                mean_crps = r.get("mean_crps")
-                if mean_crps is None:
-                    dropped += 1
-                    continue
-                scores[int(r["uid"])] = float(mean_crps)
-            except (TypeError, ValueError, KeyError):
+                parsed = _parse_score_row(r)
+            except (TypeError, ValueError, KeyError, AttributeError):
                 dropped += 1
+                continue
+            if parsed is not None:
+                scores[parsed[0]] = parsed[1]
 
         if dropped:
             bt.logging.warning(
                 f"VHFT: dropped {dropped} unusable score row(s) "
-                f"(null mean_crps or malformed uid/weight)"
+                f"(null/non-positive mean_crps or malformed uid/weight)"
             )
         if not scores:
             bt.logging.info("VHFT: no scored participants this cycle")
