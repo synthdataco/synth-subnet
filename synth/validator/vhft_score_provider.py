@@ -44,6 +44,12 @@ class VhftScoreProvider:
         raw mean_crps (the blend applies its own softmax, so pass the raw score,
         not the pre-normalized weight).
 
+        Rows are parsed defensively: mean_crps is null whenever the scorer could
+        not attach one (older snapshots, or a uid/mean_crps length mismatch — see
+        bigtable_scores_provider, where null is the deliberate sentinel because 0.0
+        is a real perfect-CRPS value). A null on a positive-weight row is dropped
+        rather than coerced, and so is any row with a malformed uid/weight.
+
         Returns None on any HTTP/parse failure or when no participants are scored,
         so the caller skips VHFT this cycle rather than crashing the scoring loop.
 
@@ -62,11 +68,25 @@ class VhftScoreProvider:
             )
             return None
 
-        scores = {
-            int(r["uid"]): float(r["mean_crps"])
-            for r in rows
-            if float(r.get("weight", 0.0)) > 0.0
-        }
+        scores: dict[int, float] = {}
+        dropped = 0
+        for r in rows:
+            try:
+                if float(r.get("weight") or 0.0) <= 0.0:
+                    continue
+                mean_crps = r.get("mean_crps")
+                if mean_crps is None:
+                    dropped += 1
+                    continue
+                scores[int(r["uid"])] = float(mean_crps)
+            except (TypeError, ValueError, KeyError):
+                dropped += 1
+
+        if dropped:
+            bt.logging.warning(
+                f"VHFT: dropped {dropped} unusable score row(s) "
+                f"(null mean_crps or malformed uid/weight)"
+            )
         if not scores:
             bt.logging.info("VHFT: no scored participants this cycle")
             return None
