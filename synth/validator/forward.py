@@ -137,6 +137,14 @@ def calculate_moving_average_and_update_rewards(
                 competition_config.VHFT_COMPETITION,
             )
             if vhft_ma:
+                # Same per-competition log the inline three emit, so VHFT is
+                # auditable from the logs alone. Without it the blend is only
+                # visible in miner_rewards, which is awkward to reach on
+                # mainnet. Inside the guard, unlike the loop above: vhft_ma is
+                # Optional and print_rewards_df would raise on None.
+                print_rewards_df(
+                    vhft_ma, competition_config.VHFT_COMPETITION.label
+                )
                 miner_data_handler.update_miner_rewards(vhft_ma)
                 moving_averages_data[
                     competition_config.VHFT_COMPETITION.label
