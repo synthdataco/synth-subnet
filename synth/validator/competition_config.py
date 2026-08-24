@@ -117,10 +117,11 @@ VHFT_COMPETITION = CompetitionConfig(
     time_length=10,
     time_increment=10,
     scoring_intervals={"10s": 10},
-    # TODO: calibrate VHFT shaping. window_days is nominal — the external scorer
-    # already windows the scores, so no per-window aggregation happens here.
+    # window_days is nominal — the external scorer already windows the scores, so
+    # no per-window aggregation happens here.
     window_days=1,
-    # TODO: calibrate softmax_beta for the mean_crps scale. MUST stay negative
-    # (lower CRPS = higher reward), same convention as the other competitions.
-    softmax_beta=-0.15,
+    # softmax_beta = -0.25 for the mean_crps scale (steeper than the 24h comps'
+    # -0.15, gentler than Crypto-1h's -0.3). MUST stay negative (lower CRPS =
+    # higher reward), same convention as the other competitions.
+    softmax_beta=-0.25,
 )
