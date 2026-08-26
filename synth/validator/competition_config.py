@@ -120,10 +120,16 @@ VHFT_COMPETITION = CompetitionConfig(
     # window_days is nominal — the external scorer already windows the scores, so
     # no per-window aggregation happens here.
     window_days=1,
-    # softmax_beta = -0.25 for the mean_crps scale (steeper than the 24h comps'
-    # -0.15, gentler than Crypto-1h's -0.3). MUST stay negative (lower CRPS =
-    # higher reward), same convention as the other competitions.
-    softmax_beta=-0.25,
+    # softmax_beta = -2.0 (was -0.25) — steeper than every other competition by
+    # design, not scale-matched to them. The softmax acts on ABSOLUTE mean_crps and
+    # the field is tightly bunched, so beta converts a small CRPS gap into a large
+    # weight gap: measured on the 2026-08-25 field (spread 6.537-7.207, ~10% of the
+    # ~6.9 base), -0.25 gave a 1.18x best/worst ratio and a 31.6% top-3 share,
+    # -2.0 gives 3.82x and 43.0%. The flip side is reward variance — rank shuffle
+    # inside that narrow band now moves weight substantially.
+    # MUST stay negative (lower CRPS = higher reward), same convention as the
+    # other competitions.
+    softmax_beta=-2.0,
 )
 
 # Plausible size of the VHFT participant field, enforced in
