@@ -129,9 +129,13 @@ def test_zero_is_kept_as_the_winner_and_negative_is_dropped():
     scores = _fetch(
         {
             "scores": [
-                {"uid": 12, "weight": 0.5, "mean_crps": 0.0},   # winner — kept
+                {"uid": 12, "weight": 0.5, "mean_crps": 0.0},  # winner — kept
                 {"uid": 13, "weight": 0.5, "mean_crps": 22.0},
-                {"uid": 14, "weight": 0.5, "mean_crps": -1.0},  # impossible — dropped
+                {
+                    "uid": 14,
+                    "weight": 0.5,
+                    "mean_crps": -1.0,
+                },  # impossible — dropped
                 {"uid": 15, "weight": 0.5, "mean_crps": 25.5},
             ]
         }
@@ -164,7 +168,9 @@ def test_single_scored_uid_is_not_treated_as_degenerate():
     Whether one participant is enough is compute_vhft_smoothed_score's call
     (VHFT_MIN_PARTICIPANTS), not this parser's.
     """
-    assert _fetch({"scores": [{"uid": 12, "weight": 1.0, "mean_crps": 0.0}]}) == {12: 0.0}
+    assert _fetch(
+        {"scores": [{"uid": 12, "weight": 1.0, "mean_crps": 0.0}]}
+    ) == {12: 0.0}
 
 
 def test_steady_state_field_is_accepted():
@@ -178,7 +184,9 @@ def test_steady_state_field_is_accepted():
                 "weight": 0.11 if uid in participants else 0.0,
                 # Distinct per uid: a real field-relative field is never all-equal,
                 # and an all-equal one is deliberately rejected as a placeholder.
-                "mean_crps": (0.4 + uid / 1000) if uid in participants else 0.0,
+                "mean_crps": (
+                    (0.4 + uid / 1000) if uid in participants else 0.0
+                ),
             }
             for uid in range(256)
         ]
