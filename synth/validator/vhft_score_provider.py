@@ -28,9 +28,15 @@ def _parse_score_row(row: typing.Any) -> typing.Optional[tuple[int, float]]:
     not worth logging.
 
     Raises TypeError/ValueError/KeyError for a row that claims participation but
-    cannot be used: a null or non-positive mean_crps, or a malformed uid/weight.
+    cannot be used: a null or NEGATIVE mean_crps, or a malformed uid/weight.
     The caller counts those and warns, because unlike a weight-0.0 row they mean
     the scorer sent something unexpected.
+
+    0.0 is a LEGITIMATE score, not a rejection: the scorer publishes field-relative
+    scores (each prompt's best miner scores 0, matching the subnet's own
+    compute_prompt_scores), so a miner that wins every prompt in the window averages
+    exactly 0.0. Non-participants also read 0.0, which is why `weight > 0` — not the
+    score — is the participation test, and why that check must stay first.
     """
     if float(row.get("weight") or 0.0) <= 0.0:
         return None
@@ -38,8 +44,8 @@ def _parse_score_row(row: typing.Any) -> typing.Optional[tuple[int, float]]:
     if mean_crps is None:
         raise ValueError("null mean_crps on a positive-weight row")
     crps = float(mean_crps)
-    if crps <= 0.0:
-        raise ValueError(f"non-positive mean_crps {crps!r}")
+    if crps < 0.0:
+        raise ValueError(f"negative mean_crps {crps!r}")
     return int(row["uid"]), crps
 
 
@@ -73,17 +79,25 @@ class VhftScoreProvider:
         is a real perfect-CRPS value). A null on a positive-weight row is dropped
         rather than coerced, and so is any row with a malformed uid/weight.
 
-        A non-positive mean_crps on a positive-weight row is ALSO dropped, and
-        that filter is load-bearing. After a restart the scorer can serve a
-        placeholder snapshot written before it has scored anything, giving every
-        uid a nonzero weight and a 0.0 CRPS. Filtering on weight alone lets that
-        through, and 0.0 reads as a *perfect* score to the lower-is-better
-        softmax downstream — i.e. the VHFT block's whole share of emissions
-        spread across every registered miner, none of whom competed. Filtering
-        on crps is what actually excludes non-participants; weight only
-        distinguishes them once the scorer has real results. A genuine 0.0 would
-        need a point-mass prediction landing exactly on the realized price for
-        every observation in the window, so dropping it costs a cycle at most.
+        A NEGATIVE mean_crps is dropped (impossible by construction). 0.0 is NOT
+        dropped, and that is a deliberate reversal: the scorer now publishes
+        field-relative scores, where each prompt's best miner scores 0 (matching
+        the subnet's own compute_prompt_scores), so the window's best miner
+        legitimately averages 0.0. The previous rule — drop any non-positive score,
+        justified because a genuine 0.0 needed a point-mass prediction landing
+        exactly on the realized price — would now systematically exclude the
+        WINNER from every cycle.
+
+        The protection that rule provided is preserved by the degenerate-snapshot
+        guard below. The incident it defends against is a post-restart placeholder
+        snapshot: every uid at a nonzero weight and an identical score, which would
+        spread the VHFT block's whole share across every registered miner, none of
+        whom competed. That snapshot's signature is that ALL scores are identical,
+        which is now what we test for — and unlike the old rule it catches a
+        degenerate snapshot at any value, not only at 0.0. Two further layers back
+        it up: the scorer refuses to publish while its book is empty, and
+        compute_vhft_smoothed_score skips any field outside
+        [VHFT_MIN_PARTICIPANTS, VHFT_MAX_PARTICIPANTS].
 
         Returns None on any HTTP/parse failure or when no participants are scored,
         so the caller skips VHFT this cycle rather than crashing the scoring loop.
@@ -117,9 +131,21 @@ class VhftScoreProvider:
         if dropped:
             bt.logging.warning(
                 f"VHFT: dropped {dropped} unusable score row(s) "
-                f"(null/non-positive mean_crps or malformed uid/weight)"
+                f"(null/negative mean_crps or malformed uid/weight)"
             )
         if not scores:
             bt.logging.info("VHFT: no scored participants this cycle")
+            return None
+        # Degenerate-snapshot guard. Real field-relative scores over a 24h window are
+        # never all equal (that would need every miner to tie on every prompt), so an
+        # identical-score field means a placeholder/degraded snapshot, not a result.
+        # Replaces the old "drop non-positive crps" rule, which cannot survive scores
+        # that legitimately start at 0. See the docstring.
+        if len(scores) > 1 and len(set(scores.values())) == 1:
+            bt.logging.warning(
+                f"VHFT: all {len(scores)} scored uids share an identical score "
+                f"({next(iter(scores.values()))!r}) — treating as a placeholder "
+                f"snapshot and skipping VHFT this cycle"
+            )
             return None
         return scores

@@ -20,6 +20,19 @@ from synth.validator.moving_average import compute_vhft_smoothed_score
 SCORED_TIME = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
 
 
+def _field(n):
+    """A plausible scored field of n uids, with a DISTINCT score each.
+
+    Deliberately not a flat field. Scores are field-relative (each prompt's winner
+    scores 0), and a real one is never all-equal over a full window — an identical
+    field is the signature of a placeholder/degraded snapshot, which
+    VhftScoreProvider.fetch_scores rejects outright. These tests call
+    compute_vhft_smoothed_score directly and so bypass that guard, but they should not
+    ship an example of the exact shape it exists to reject.
+    """
+    return {uid: 0.4 + uid / 100 for uid in range(n)}
+
+
 def _handler(registered_uids):
     """MinerDataHandler stub mapping each uid to a distinct miner_id."""
     handler = MagicMock()
@@ -41,7 +54,7 @@ def _blend(vhft_scores, registered_uids=None):
 
 
 def test_steady_state_field_blends_and_splits_the_block_evenly():
-    scores = {uid: 0.4 for uid in range(9)}
+    scores = _field(9)
     rewards = _blend(scores)
 
     assert rewards is not None
@@ -65,12 +78,12 @@ def test_lower_crps_earns_more_than_higher_crps():
 def test_too_few_participants_skips_the_cycle(n):
     # The block is a fixed share however many split it, so at n=1 a single
     # miner would take the whole 25% of emissions.
-    assert _blend({uid: 0.4 for uid in range(n)}) is None
+    assert _blend(_field(n)) is None
 
 
 def test_too_many_participants_skips_the_cycle():
     n = VHFT_MAX_PARTICIPANTS + 1
-    assert _blend({uid: 0.4 for uid in range(n)}) is None
+    assert _blend(_field(n)) is None
 
 
 def test_guard_counts_paid_miners_not_returned_uids():
@@ -80,12 +93,12 @@ def test_guard_counts_paid_miners_not_returned_uids():
     exactly as hard as a field of 2, so counting the raw scorer response would
     miss it.
     """
-    scores = {uid: 0.4 for uid in range(9)}
+    scores = _field(9)
     assert _blend(scores, registered_uids=[0, 1]) is None
 
 
 def test_unregistered_uids_are_dropped_but_a_valid_field_still_blends():
-    scores = {uid: 0.4 for uid in range(9)}
+    scores = _field(9)
     registered = list(range(5))
     rewards = _blend(scores, registered_uids=registered)
 

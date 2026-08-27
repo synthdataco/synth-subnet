@@ -121,13 +121,20 @@ VHFT_COMPETITION = CompetitionConfig(
     # no per-window aggregation happens here.
     window_days=1,
     # softmax_beta = -2.0 (was -0.25) — steeper than every other competition by
-    # design, not scale-matched to them. The softmax acts on ABSOLUTE mean_crps and
-    # the field is tightly bunched, so beta converts a small CRPS gap into a large
-    # weight gap: measured on the 2026-08-25 field (spread 6.537-7.207, ~10% of the
-    # ~6.9 base), -0.25 gave a 1.18x best/worst ratio and a 31.6% top-3 share,
-    # -2.0 gives 3.82x and 43.0%. The flip side is reward variance — rank shuffle
-    # inside that narrow band now moves weight substantially.
-    # MUST stay negative (lower CRPS = higher reward), same convention as the
+    # design, not scale-matched to them. MEASURED on a real 3h window (2026-08-27,
+    # 11 miners, after the scorer moved to the subnet-parity pipeline): the field
+    # spans 1.186 and -2.0 gives a 10.7x best/worst ratio with a 45% top-3 share,
+    # against 1.19x at -0.15 and 1.43x at -0.3.
+    #
+    # What beta actually responds to is the SPREAD between miners, NOT the absolute
+    # score level: the scorer now subtracts each prompt's winner, and softmax is
+    # invariant to that shared offset, so shifting every score changes nothing. A
+    # widening field therefore concentrates rewards harder at a fixed beta — the
+    # spread doubled between 2026-08-25 and -26 and the ratio moved with it. Revisit
+    # this number if the spread moves materially; re-measure, do not reason from the
+    # score level.
+    #
+    # MUST stay negative (lower score = higher reward), same convention as the
     # other competitions.
     softmax_beta=-2.0,
 )
