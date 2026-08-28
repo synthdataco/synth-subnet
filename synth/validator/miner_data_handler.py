@@ -324,6 +324,16 @@ class MinerDataHandler:
                                     "percentile95": row["percentile95"],
                                     "lowest_score": row["lowest_score"],
                                     "prompt_score_v3": row["prompt_score_v3"],
+                                    # True when the response was clipped to the
+                                    # outlier ceiling. Persisted so the cap rate
+                                    # can be monitored — a rising rate means
+                                    # someone may be provoking it deliberately.
+                                    # Absent on rows written before the cap
+                                    # shipped, so read it as
+                                    # COALESCE(..., false).
+                                    "score_capped": row.get(
+                                        "score_capped", False
+                                    ),
                                     "crps_data": row["crps_data"],
                                 },
                                 "prompt_score_v3": row["prompt_score_v3"],

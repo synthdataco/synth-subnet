@@ -120,23 +120,19 @@ VHFT_COMPETITION = CompetitionConfig(
     # window_days is nominal — the external scorer already windows the scores, so
     # no per-window aggregation happens here.
     window_days=1,
-    # softmax_beta = -2.0 (was -0.25) — steeper than every other competition by
-    # design, not scale-matched to them. MEASURED on a real 3h window (2026-08-27,
-    # 11 miners, after the scorer moved to the subnet-parity pipeline): the field
-    # spans 1.186 and -2.0 gives a 10.7x best/worst ratio with a 45% top-3 share,
-    # against 1.19x at -0.15 and 1.43x at -0.3.
+    # softmax_beta is deliberately steeper than the other competitions': this
+    # field is tightly bunched, so a gentler beta leaves rewards nearly flat
+    # across it.
     #
-    # What beta actually responds to is the SPREAD between miners, NOT the absolute
-    # score level: the scorer now subtracts each prompt's winner, and softmax is
-    # invariant to that shared offset, so shifting every score changes nothing. A
-    # widening field therefore concentrates rewards harder at a fixed beta — the
-    # spread doubled between 2026-08-25 and -26 and the ratio moved with it. Revisit
-    # this number if the spread moves materially; re-measure, do not reason from the
-    # score level.
+    # Beta responds to the SPREAD between miners, not the absolute score level:
+    # the scorer subtracts each prompt's winner and softmax is invariant to that
+    # shared offset, so shifting every score changes nothing. A wider field
+    # therefore concentrates rewards harder at a fixed beta. Re-measure before
+    # changing this; do not reason from the score level.
     #
     # MUST stay negative (lower score = higher reward), same convention as the
     # other competitions.
-    softmax_beta=-2.0,
+    softmax_beta=-4.0,
 )
 
 # Plausible size of the VHFT participant field, enforced in
@@ -144,12 +140,11 @@ VHFT_COMPETITION = CompetitionConfig(
 # cycle rather than trusted.
 #
 # The VHFT block is a fixed SMOOTHED_SCORE_COEFFICIENT however many uids share
-# it, so each participant's cut scales as 1/N: at 9 participants the top uid
-# takes ~2.8% of all emissions, at 3 it takes ~8.3%, and at 1 it takes the whole
-# 25%. A round that scores only a handful of miners — a degraded scorer, or a
-# field that has mostly dropped out — would otherwise quietly hand one miner an
-# outsized share, so require a floor. The ceiling is the other end of the same
-# argument: a snapshot naming dozens of scored participants is a malfunctioning
-# scorer rather than a competition that suddenly got popular.
+# it, so each participant's cut scales as 1/N — at one participant that is the
+# entire block. A round that scores only a handful of miners, whether from a
+# degraded scorer or a field that has mostly dropped out, would otherwise hand
+# one miner an outsized share, so require a floor. The ceiling is the other end
+# of the same argument: a snapshot naming far more scored participants than the
+# competition has is a malfunctioning scorer, not sudden popularity.
 VHFT_MIN_PARTICIPANTS = 3
 VHFT_MAX_PARTICIPANTS = 64
