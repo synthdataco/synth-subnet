@@ -208,14 +208,22 @@ def _build_detailed_info(
     miner_prediction_process_time: list,
     percentile95: float,
     lowest_score: float,
+    was_capped: np.ndarray,
 ) -> list[dict]:
-    """Build detailed information dict from processing results."""
+    """Build detailed information dict from processing results.
+
+    score_capped marks a response clipped to the outlier ceiling. It is what
+    makes the cap monitorable after the fact — a rising rate is the signal that
+    someone is provoking it to inflate the field rather than merely predicting
+    badly.
+    """
     return [
         {
             "miner_uid": pred.miner_uid,
             "prompt_score_v3": float(prompt_score),
             "percentile95": float(percentile95),
             "lowest_score": float(lowest_score),
+            "score_capped": bool(capped),
             "miner_prediction_id": prediction_id,
             "format_validation": format,
             "process_time": process_time,
@@ -230,6 +238,7 @@ def _build_detailed_info(
             format,
             prediction_id,
             process_time,
+            capped,
         ) in zip(
             predictions,
             scores,
@@ -238,6 +247,7 @@ def _build_detailed_info(
             miner_prediction_format_list,
             miner_prediction_id_list,
             miner_prediction_process_time,
+            was_capped,
         )
     ]
 
@@ -346,8 +356,8 @@ def get_rewards_multiprocess(
         miner_prediction_process_time.append(process_time)
 
     score_values = np.array(scores)
-    prompt_scores, percentile95, lowest_score = compute_prompt_scores(
-        score_values
+    prompt_scores, percentile95, lowest_score, was_capped = (
+        compute_prompt_scores(score_values)
     )
 
     if prompt_scores is None:
@@ -366,21 +376,95 @@ def get_rewards_multiprocess(
         miner_prediction_process_time,
         percentile95,
         lowest_score,
+        was_capped,
     )
 
     return prompt_scores, detailed_info, real_prices
 
 
+# Ceiling on a single miner's CRPS, as a multiple of the field's MEDIAN.
+#
+# Response validation only rejects prices above the float32 ceiling (~3.4e38),
+# so a forecast of 1e30 is accepted as CORRECT and produces a CRPS of the same
+# order. Uncapped, one such response does two kinds of damage:
+#
+#   1. It lands in the p95 that fills MISSED responses, so a miner that merely
+#      timed out inherits an astronomical score it had no part in producing.
+#   2. It survives into the moving average, where exp(beta * score) underflows
+#      to exactly 0.0 — and compute_smoothed_score drops zero-weight miners
+#      entirely, so the miner vanishes from the results rather than ranking last.
+#
+# The multiple was chosen against real scoring history: responses beyond 10x
+# their prompt's median are vanishingly rare and, where they occur, are already
+# unusable. Real predictions do not spread that far, so this never touches
+# legitimate scoring and does not change a miner's optimum strategy.
+#
+# A much larger multiple was tried first and rejected. It leaves the capped
+# value orders of magnitude above a normal score, which distorts dashboards and,
+# for a miner capped on several prompts, pushes the windowed mean back toward
+# the underflow-to-zero behaviour this exists to prevent. 10x keeps a capped row
+# on the same scale as the rest of the field.
+#
+# This is NOT the p90 cap removed in #302: that compressed ordinary scores,
+# whereas at 10x nothing ordinary is touched at all.
+#
+# The median is the right basis because it is unmoved by a large minority of
+# garbage — the p95 is precisely what garbage captures first.
+OUTLIER_SCORE_MEDIAN_MULTIPLE = 10.0
+
+
 @print_execution_time
 def compute_prompt_scores(score_values: np.ndarray):
+    """Returns (prompt_scores, percentile95, lowest_score, was_capped).
+
+    was_capped is a bool array aligned with score_values, True where a response
+    was clipped to the outlier ceiling. It is persisted per row so the cap is
+    monitorable — if the rate ever climbs, someone may be provoking it
+    deliberately to inflate the field.
+    """
     if np.all(score_values == -1):
-        return None, 0, 0
+        return None, 0, 0, None
+    score_values = np.asarray(score_values, dtype=float)
     score_values_valid = score_values[score_values != -1]
-    percentile95 = np.percentile(score_values_valid, 95)
-    # Valid scores are not capped; only missed responses (-1) are filled.
+
+    # Clip absurd outliers BEFORE deriving anything from them. The cap is taken
+    # on the RAW crps, before the best score is subtracted: raw crps has a
+    # stable positive scale set by the asset's price, whereas post-subtraction
+    # scores start at 0 and a tightly-bunched field would give a median near
+    # zero — collapsing a median-multiple cap onto legitimate scores.
+    median = float(np.median(score_values_valid))
+    # Aligned with score_values, so it can be persisted per row. Misses (-1) are
+    # below any positive cap and so are never flagged.
+    was_capped = np.zeros(score_values.shape, dtype=bool)
+    if median > 0:
+        cap = median * OUTLIER_SCORE_MEDIAN_MULTIPLE
+        was_capped = score_values > cap
+        if was_capped.any():
+            bt.logging.warning(
+                f"{int(was_capped.sum())} of {score_values_valid.size} valid "
+                f"response(s) exceeded {OUTLIER_SCORE_MEDIAN_MULTIPLE:g}x the "
+                f"median CRPS ({median:.4g}); clipping to {cap:.4g} and "
+                f"excluding them from the p95 used to fill missed responses."
+            )
+        # cap > 0, so np.minimum leaves the -1 miss sentinels untouched.
+        score_values = np.minimum(score_values, cap)
+
+    # The p95 that fills MISSED responses is taken over the scores that were NOT
+    # capped. Clipping alone is not enough: once more than 5% of the field is
+    # garbage the p95 lands on the cap itself, so a miner that merely timed out
+    # still inherits a near-fatal score it had no part in producing. Excluding
+    # capped scores keeps the two cases properly separated — submit garbage and
+    # you are capped and ranked last; miss the prompt and you are scored like
+    # the 95th percentile of the miners who actually answered.
+    uncapped = score_values[(score_values != -1) & ~was_capped]
+    percentile95 = np.percentile(
+        uncapped if uncapped.size else score_values[score_values != -1], 95
+    )
+    # Valid scores are capped (above) but not otherwise compressed; only missed
+    # responses (-1) are filled.
     filled_scores = np.where(score_values == -1, percentile95, score_values)
     lowest_score = np.min(filled_scores)
-    return filled_scores - lowest_score, percentile95, lowest_score
+    return filled_scores - lowest_score, percentile95, lowest_score, was_capped
 
 
 def compute_softmax(score_values: np.ndarray, beta: float) -> np.ndarray:
