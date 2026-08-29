@@ -71,6 +71,25 @@ SCORING_GATE_SECONDS = (
     PriceDataProvider.CANDLE_INTERVAL_SECONDS + PRICE_PUBLISH_LATENCY_SECONDS
 )
 
+# Cap on how many unscored requests one pass of a competition will score.
+#
+# forward_score scores every competition to exhaustion before it reaches
+# set_weights, so without a bound the weight update is gated behind draining the
+# whole backlog. That is stable only while scoring outpaces prompting: if it ever
+# does not, the backlog grows, each pass takes longer, and weights age without
+# limit. The feedback loop is the hazard, not any single slow query.
+#
+# Bounding the batch does not reduce throughput — the same requests per hour are
+# scored either way, they are just interleaved with weight updates instead of
+# following one unbounded drain. It converts unbounded weight staleness into a
+# bounded one, roughly competitions * SCORING_BATCH_LIMIT * per-request time.
+#
+# It is deliberately not a fix for a throughput deficit. If scoring is slower
+# than prompting the backlog still grows and the oldest requests can age out of
+# the window unscored; this only keeps weights current while that is addressed.
+# Tunable by env so it can be adjusted without a release.
+SCORING_BATCH_LIMIT = int(os.environ.get("SCORING_BATCH_LIMIT", "20"))
+
 
 class MinerDataHandler:
     def __init__(
@@ -599,6 +618,10 @@ class MinerDataHandler:
                         )
                     )
                     .order_by(ValidatorRequest.start_time.asc())
+                    # Oldest first, so a backlog is drained in order and nothing
+                    # is starved indefinitely; the bound is what lets the caller
+                    # reach set_weights between batches.
+                    .limit(SCORING_BATCH_LIMIT)
                 )
 
                 results: list[ValidatorRequest] = []
