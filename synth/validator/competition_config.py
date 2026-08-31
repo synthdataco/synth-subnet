@@ -103,3 +103,48 @@ ALL_COMPETITIONS = [
     CRYPTO_24H,
     CRYPTO_1H,
 ]
+
+# VHFT (Synth Ultra) — the 10-second BTC-microprice competition. Scored OFF-subnet
+# and blended in via the external-ingestion path (vhft_score_provider +
+# compute_vhft_smoothed_score), NOT through the inline-CRPS path — so it is
+# deliberately kept OUT of ALL_COMPETITIONS. It reuses the same
+# SMOOTHED_SCORE_COEFFICIENT and softmax as the other three, so after set_weights
+# L1-normalizes, the four competitions split emissions equally (the coefficient
+# value cancels; a *shared* coefficient is what makes the split equal).
+VHFT_COMPETITION = CompetitionConfig(
+    asset_list=["BTC"],
+    label="VHFT 10s",
+    time_length=10,
+    time_increment=10,
+    scoring_intervals={"10s": 10},
+    # window_days is nominal — the external scorer already windows the scores, so
+    # no per-window aggregation happens here.
+    window_days=1,
+    # softmax_beta is deliberately steeper than the other competitions': this
+    # field is tightly bunched, so a gentler beta leaves rewards nearly flat
+    # across it.
+    #
+    # Beta responds to the SPREAD between miners, not the absolute score level:
+    # the scorer subtracts each prompt's winner and softmax is invariant to that
+    # shared offset, so shifting every score changes nothing. A wider field
+    # therefore concentrates rewards harder at a fixed beta. Re-measure before
+    # changing this; do not reason from the score level.
+    #
+    # MUST stay negative (lower score = higher reward), same convention as the
+    # other competitions.
+    softmax_beta=-4.0,
+)
+
+# Plausible size of the VHFT participant field, enforced in
+# compute_vhft_smoothed_score — outside this range the blend is skipped for the
+# cycle rather than trusted.
+#
+# The VHFT block is a fixed SMOOTHED_SCORE_COEFFICIENT however many uids share
+# it, so each participant's cut scales as 1/N — at one participant that is the
+# entire block. A round that scores only a handful of miners, whether from a
+# degraded scorer or a field that has mostly dropped out, would otherwise hand
+# one miner an outsized share, so require a floor. The ceiling is the other end
+# of the same argument: a snapshot naming far more scored participants than the
+# competition has is a malfunctioning scorer, not sudden popularity.
+VHFT_MIN_PARTICIPANTS = 3
+VHFT_MAX_PARTICIPANTS = 64

@@ -12,6 +12,8 @@ from synth.utils.logging import print_execution_time
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.competition_config import CompetitionConfig
 from synth.validator.competition_config import SMOOTHED_SCORE_COEFFICIENT
+from synth.validator.competition_config import VHFT_MAX_PARTICIPANTS
+from synth.validator.competition_config import VHFT_MIN_PARTICIPANTS
 from synth.validator.reward import compute_softmax
 
 # Per-asset weighting coefficients for score normalization across assets.
@@ -182,6 +184,82 @@ def compute_smoothed_score(
     for item, reward_weight in zip(
         filtered_moving_averages_data, reward_weight_list
     ):
+        if float(reward_weight) > 0:
+            rewards.append(
+                {
+                    "miner_id": item["miner_id"],
+                    "miner_uid": item["miner_uid"],
+                    "smoothed_score": item["rolling_avg"],
+                    "reward_weight": float(reward_weight)
+                    * SMOOTHED_SCORE_COEFFICIENT,
+                    "updated_at": scored_time.isoformat(),
+                    "prompt_name": comp.label,
+                }
+            )
+
+    return rewards
+
+
+@print_execution_time
+def compute_vhft_smoothed_score(
+    miner_data_handler: MinerDataHandler,
+    vhft_scores: dict[int, float],
+    scored_time: datetime,
+    comp: CompetitionConfig,
+) -> typing.Optional[list[dict]]:
+    """Shape external VHFT per-uid scores into reward-weight dicts.
+
+    `vhft_scores` is {miner_uid: mean_crps} for VHFT participants only (already
+    windowed by the external scorer), so there is NO per-window aggregation here —
+    we go straight to the same softmax x SMOOTHED_SCORE_COEFFICIENT tail as
+    compute_smoothed_score, keeping shaping uniform across all four competitions.
+
+    Maps uid -> miner_id (the key combine_moving_averages merges on), dropping uids
+    with no Postgres identity (unregistered). Returns None if nothing maps, or if
+    the surviving field falls outside VHFT_MIN/MAX_PARTICIPANTS — the block is a
+    fixed share however many miners split it, so too few is a concentration risk
+    and too many is a malfunctioning scorer. Either way the caller skips VHFT for
+    the cycle and the other three competitions still set weights.
+    """
+    if not vhft_scores:
+        return None
+
+    uid_to_miner_id = miner_data_handler.get_miner_uid_to_id_map()
+    if not uid_to_miner_id:
+        return None
+
+    scored = [
+        {
+            "miner_id": uid_to_miner_id[uid],
+            "miner_uid": uid,
+            "rolling_avg": crps,
+        }
+        for uid, crps in vhft_scores.items()
+        if uid in uid_to_miner_id
+    ]
+    if not scored:
+        return None
+
+    # Concentration guard. Checked AFTER the identity mapping above, on the
+    # miners that will actually be paid: 9 scored uids of which only 1 is
+    # registered concentrates exactly as hard as 1 scored uid, and a raw
+    # len(vhft_scores) check would miss that.
+    if not VHFT_MIN_PARTICIPANTS <= len(scored) <= VHFT_MAX_PARTICIPANTS:
+        bt.logging.warning(
+            f"VHFT: {len(scored)} scored participant(s) outside the plausible "
+            f"range [{VHFT_MIN_PARTICIPANTS}, {VHFT_MAX_PARTICIPANTS}] — "
+            f"skipping the VHFT blend this cycle rather than concentrating "
+            f"its share on too few miners"
+        )
+        return None
+
+    # Same softmax tail as compute_smoothed_score: negative beta -> lower CRPS wins.
+    reward_weight_list = compute_softmax(
+        np.array([s["rolling_avg"] for s in scored]), comp.softmax_beta
+    )
+
+    rewards = []
+    for item, reward_weight in zip(scored, reward_weight_list):
         if float(reward_weight) > 0:
             rewards.append(
                 {

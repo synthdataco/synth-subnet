@@ -324,6 +324,16 @@ class MinerDataHandler:
                                     "percentile95": row["percentile95"],
                                     "lowest_score": row["lowest_score"],
                                     "prompt_score_v3": row["prompt_score_v3"],
+                                    # True when the response was clipped to the
+                                    # outlier ceiling. Persisted so the cap rate
+                                    # can be monitored — a rising rate means
+                                    # someone may be provoking it deliberately.
+                                    # Absent on rows written before the cap
+                                    # shipped, so read it as
+                                    # COALESCE(..., false).
+                                    "score_capped": row.get(
+                                        "score_capped", False
+                                    ),
                                     "crps_data": row["crps_data"],
                                 },
                                 "prompt_score_v3": row["prompt_score_v3"],
@@ -732,6 +742,22 @@ class MinerDataHandler:
             )
 
         return miner_data
+
+    def get_miner_uid_to_id_map(self) -> dict[int, int] | None:
+        """Managed {miner_uid: miner_id} for the latest identity per uid.
+
+        Used by the VHFT blend to map external per-uid scores to the Postgres
+        miner_id that combine_moving_averages merges on. None on DB failure.
+        """
+        try:
+            with self.engine.connect() as connection:
+                with connection.begin():
+                    return self.get_miner_uids_map(connection)
+        except Exception as e:
+            bt.logging.exception(
+                f"in get_miner_uid_to_id_map (got an exception): {e}"
+            )
+            return None
 
     @retry(
         stop=stop_after_attempt(5),

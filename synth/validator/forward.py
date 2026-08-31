@@ -43,6 +43,7 @@ from synth.validator.prediction_notifier import PredictionNotifier
 from synth.validator.moving_average import (
     combine_moving_averages,
     compute_smoothed_score,
+    compute_vhft_smoothed_score,
     prepare_df_for_moving_average,
     print_rewards_df,
 )
@@ -92,6 +93,7 @@ def send_weights_to_bittensor_and_update_weights_history(
 def calculate_moving_average_and_update_rewards(
     miner_data_handler: MinerDataHandler,
     scored_time: datetime,
+    vhft_provider=None,
 ) -> list[dict]:
     moving_averages_data: dict[str, list[dict]] = {}
     for comp in competition_config.ALL_COMPETITIONS:
@@ -121,6 +123,32 @@ def calculate_moving_average_and_update_rewards(
 
         miner_data_handler.update_miner_rewards(moving_averages)
         moving_averages_data[comp.label] = moving_averages
+
+    # VHFT: a 4th competition scored OFF-subnet. Pulled from the external scorer and
+    # run through the SAME shape+blend tail as the others. Off (skipped) unless
+    # VHFT_SCORES_URL is set (vhft_provider is None), so this is inert until enabled.
+    if vhft_provider is not None:
+        vhft_scores = vhft_provider.fetch_scores()
+        if vhft_scores:
+            vhft_ma = compute_vhft_smoothed_score(
+                miner_data_handler,
+                vhft_scores,
+                scored_time,
+                competition_config.VHFT_COMPETITION,
+            )
+            if vhft_ma:
+                # Same per-competition log the inline three emit, so VHFT is
+                # auditable from the logs alone. Without it the blend is only
+                # visible in miner_rewards, which is awkward to reach on
+                # mainnet. Inside the guard, unlike the loop above: vhft_ma is
+                # Optional and print_rewards_df would raise on None.
+                print_rewards_df(
+                    vhft_ma, competition_config.VHFT_COMPETITION.label
+                )
+                miner_data_handler.update_miner_rewards(vhft_ma)
+                moving_averages_data[
+                    competition_config.VHFT_COMPETITION.label
+                ] = vhft_ma
 
     return combine_moving_averages(moving_averages_data)
 

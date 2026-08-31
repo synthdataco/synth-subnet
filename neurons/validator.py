@@ -45,6 +45,7 @@ from synth.validator.bigtable_prediction_storage import (
 )
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.prediction_notifier import PredictionNotifier
+from synth.validator.vhft_score_provider import VhftScoreProvider
 from synth.validator.price_data_provider import PriceDataProvider
 from synth.validator.storage_backend import STORAGE_BACKEND_BIGTABLE
 from synth.validator import competition_config
@@ -94,6 +95,9 @@ class Validator(BaseValidatorNeuron):
         # None (disabled) unless both PUBSUB_PROJECT and
         # PUBSUB_TOPIC_PREDICTIONS are set.
         self.prediction_notifier = PredictionNotifier.from_env()
+        # None (disabled) unless VHFT_SCORES_URL is set — when enabled, blends the
+        # VHFT 10s competition into set_weights as a 4th competition.
+        self.vhft_score_provider = VhftScoreProvider.from_env()
         self.miner_data_handler = MinerDataHandler(
             bigtable_storage=bigtable_storage
         )
@@ -331,6 +335,7 @@ class Validator(BaseValidatorNeuron):
         moving_averages_data = calculate_moving_average_and_update_rewards(
             miner_data_handler=self.miner_data_handler,
             scored_time=scored_time,
+            vhft_provider=self.vhft_score_provider,
         )
 
         if len(moving_averages_data) == 0:

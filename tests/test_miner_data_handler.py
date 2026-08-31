@@ -1659,3 +1659,74 @@ def test_cleanup_old_history_deletes_bigtable_rows(db_engine: Engine):
     assert old_row.deleted_at is not None
     assert fresh_row.deleted_at is None
     assert fake.delete_calls == [(LOW_TEST_CONFIG.time_length, ["bt-key-old"])]
+
+
+def test_set_miner_scores_persists_the_score_capped_flag(db_engine: Engine):
+    """score_capped must survive the write into score_details_v3.
+
+    Regression: the flag is computed in reward._build_detailed_info, but
+    set_miner_scores does not store the detail dict wholesale — it copies a
+    fixed list of keys into the JSONB. A flag added upstream without being
+    added here is silently dropped, and the cap becomes unmonitorable.
+
+    Also pins the back-compat default: rows scored before the cap shipped carry
+    no flag, so a missing key must write False rather than raising.
+    """
+    handler = MinerDataHandler(db_engine)
+    start_time = "2024-11-20T00:00:00+00:00"
+    scored_time = datetime.fromisoformat("2024-11-22T00:00:00+00:00")
+
+    handler, _, _ = prepare_random_predictions(db_engine, start_time)
+    validator_requests = handler.get_validator_requests_to_score(
+        scored_time, 7, 86400, ["HYPE"]
+    )
+    assert len(validator_requests) >= 1
+
+    with db_engine.connect() as connection:
+        predictions = connection.execute(
+            select(MinerPrediction.id).where(
+                MinerPrediction.validator_requests_id
+                == validator_requests[0].id
+            )
+        ).fetchall()
+    assert len(predictions) >= 2
+
+    reward_details = []
+    for i, pred in enumerate(predictions):
+        row = {
+            "miner_uid": i,
+            "miner_prediction_id": pred.id,
+            "total_crps": 1.0,
+            "percentile95": 1.0,
+            "lowest_score": 0.01,
+            "prompt_score_v3": 1.0,
+            "crps_data": [{"crps": 1.0}],
+        }
+        # first miner capped, second explicitly not, third omits the key
+        # entirely (the pre-cap shape)
+        if i == 0:
+            row["score_capped"] = True
+        elif i == 1:
+            row["score_capped"] = False
+        reward_details.append(row)
+
+    handler.set_miner_scores(
+        [], int(validator_requests[0].id), reward_details, scored_time
+    )
+
+    with db_engine.connect() as connection:
+        results = connection.execute(
+            select(MinerScore.score_details_v3)
+            .where(
+                MinerScore.miner_predictions_id.in_(
+                    [p.id for p in predictions]
+                )
+            )
+            .order_by(MinerScore.miner_predictions_id)
+        ).fetchall()
+
+    assert results[0][0]["score_capped"] is True
+    assert results[1][0]["score_capped"] is False
+    if len(results) > 2:
+        # omitted upstream -> stored as False, never missing and never an error
+        assert results[2][0]["score_capped"] is False
