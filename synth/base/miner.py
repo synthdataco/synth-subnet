@@ -21,6 +21,7 @@ import threading
 import argparse
 
 import bittensor as bt
+from starlette.middleware.gzip import GZipMiddleware
 
 from synth.base.neuron import BaseNeuron
 from synth.utils.config import add_miner_args
@@ -57,6 +58,17 @@ class BaseMinerNeuron(BaseNeuron):
             priority_fn=self.priority,
         )
         bt.logging.info(f"Axon created: {self.axon}")
+
+        # Gzip-compress axon responses to cut egress on large prediction payloads.
+        # Transparent and signature-safe: the bittensor dendrite (aiohttp) sends
+        # `Accept-Encoding: gzip` and auto-decompresses, and its response handling
+        # never re-hashes the raw bytes, so synapse verification is unaffected —
+        # no validator-side change. Added after the axon is built but before
+        # run()/axon.start(), so it sits outside bittensor's AxonMiddleware and
+        # compresses the final signed response. `minimum_size` skips tiny bodies.
+        self.axon.app.add_middleware(
+            GZipMiddleware, minimum_size=1024, compresslevel=6
+        )
 
         # Instantiate runners
         self.should_exit = False
