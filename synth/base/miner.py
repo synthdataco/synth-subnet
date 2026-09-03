@@ -66,7 +66,9 @@ class BaseMinerNeuron(BaseNeuron):
         # no validator-side change. Added after the axon is built but before
         # run()/axon.start(), so it sits outside bittensor's AxonMiddleware and
         # compresses the final signed response. `minimum_size` skips tiny bodies.
-        self.axon.app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+        self.axon.app.add_middleware(
+            GZipMiddleware, minimum_size=1024, compresslevel=6
+        )
 
         # Instantiate runners
         self.should_exit = False
