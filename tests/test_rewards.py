@@ -203,6 +203,7 @@ def test_crps_worker_drops_non_finite_detailed_data():
                 real_prices.shape,
                 300,
                 {"5min": 300, "20min_abs": 1200},
+                {},
                 "CORRECT",
                 1,
                 0.0,

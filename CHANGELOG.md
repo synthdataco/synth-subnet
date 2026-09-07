@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased · Crypto 1h volatility scoring
+
+- **The Crypto 1h score now includes a volatility term.** On top of the CRPS on price changes, the 1h prompt score also scores realized volatility: the hour is cut into consecutive blocks of three sizes — one 60-minute, four 15-minute and twelve 5-minute — and for every block the standard deviation of the 1-minute price changes in basis points is CRPS-scored against the realized one. Writing `S60`, `S15` and `S5` for the sums of those CRPS values over the blocks of each size, the score becomes `price CRPS + λ × (S60/1 + S15/4 + S5/12) / 3` = `price CRPS + 1.75·S60 + 0.4375·S15 + 0.1458·S5`, with `λ = 5.25`. Full spec in [README §1.3](https://github.com/synthdataco/synth-subnet/blob/main/README.md#volatility-component-crypto-1h-only)
+- **Miner action required (`crypto-1h` only):** no configuration or response-format change, but a simulator whose per-minute volatility structure is miscalibrated now pays for it even when its price levels are right — worth revisiting before this goes live. `crypto-24h` and `com-equ-24h` scoring is unchanged
+- The [synth-lib backtester](https://github.com/synthdataco/synth-lib) replays the new term, so the impact on your own predictions can be measured before the switch
+
 ## Unreleased — scheduled for 2026-07-23
 
 - Emission burn removed: so 100% of miner emission goes to miners again (the owner had taken ~50% since 2025-10-17).
