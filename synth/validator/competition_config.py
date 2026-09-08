@@ -2,6 +2,11 @@ from dataclasses import dataclass
 
 SMOOTHED_SCORE_COEFFICIENT = 1 / 3
 
+# 1h score = price CRPS + VOL_CRPS_LAMBDA × the mean, over the block sizes,
+# of the mean per-block volatility CRPS — so each weight below must stay
+# VOL_CRPS_LAMBDA / (3 block sizes × the number of blocks of that size).
+VOL_CRPS_LAMBDA = 5.25
+
 
 @dataclass
 class CompetitionConfig:
@@ -10,6 +15,9 @@ class CompetitionConfig:
     time_length: int
     time_increment: int
     scoring_intervals: dict[str, int]  # Define scoring intervals in seconds.
+    # Volatility CRPS blocks: name -> (block duration in seconds, weight).
+    # Empty means the competition scores on the price CRPS alone.
+    vol_scoring_blocks: dict[str, tuple[int, float]]
     window_days: int
     softmax_beta: float
 
@@ -34,6 +42,7 @@ COM_EQU_24H = CompetitionConfig(
         "3hour": 10800,  # 3 hours
         "24hour_abs": 86400,  # 24 hours
     },
+    vol_scoring_blocks={},
     window_days=10,
     softmax_beta=-0.15,
 )
@@ -55,6 +64,7 @@ CRYPTO_24H = CompetitionConfig(
         "3hour": 10800,  # 3 hours
         "24hour_abs": 86400,  # 24 hours
     },
+    vol_scoring_blocks={},
     window_days=10,
     softmax_beta=-0.15,
 )
@@ -90,6 +100,11 @@ CRYPTO_1H = CompetitionConfig(
         "0_55min_gaps": 3300,
         "0_60min_gaps": 3600,
     },
+    vol_scoring_blocks={
+        "vol_60min": (3600, VOL_CRPS_LAMBDA / 3),  # 1 block
+        "vol_15min": (900, VOL_CRPS_LAMBDA / 12),  # 4 blocks
+        "vol_5min": (300, VOL_CRPS_LAMBDA / 36),  # 12 blocks
+    },
     window_days=5,
     softmax_beta=-0.3,
 )
@@ -117,6 +132,7 @@ VHFT_COMPETITION = CompetitionConfig(
     time_length=10,
     time_increment=10,
     scoring_intervals={"10s": 10},
+    vol_scoring_blocks={},
     # window_days is nominal — the external scorer already windows the scores, so
     # no per-window aggregation happens here.
     window_days=1,
