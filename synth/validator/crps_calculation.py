@@ -325,8 +325,10 @@ def block_volatilities(
         returns.shape[0], n_blocks, block_steps
     )
 
-    observed = np.sum(~np.isnan(blocks), axis=2)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        return np.where(
-            observed >= 2, np.nanstd(blocks, axis=2, ddof=1), np.nan
-        )
+    # Only the scorable blocks go through nanstd: it warns on a block with
+    # fewer than two observed returns, which is the tolerated case here.
+    scorable = np.sum(~np.isnan(blocks), axis=2) >= 2
+    volatilities: np.ndarray = np.full(scorable.shape, np.nan)
+    volatilities[scorable] = np.nanstd(blocks[scorable], axis=1, ddof=1)
+
+    return volatilities

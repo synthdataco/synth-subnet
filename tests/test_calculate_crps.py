@@ -1,4 +1,5 @@
 import unittest
+import warnings
 
 import numpy as np
 from properscoring import crps_ensemble
@@ -535,6 +536,18 @@ class TestVolCrps(unittest.TestCase):
         self.assertFalse(np.isnan(volatilities[0, 0]))
         self.assertTrue(np.isnan(volatilities[0, 1]))
         self.assertFalse(np.isnan(volatilities[0, 2]))
+
+    def test_block_volatilities_does_not_warn_on_gappy_blocks(self):
+        """Under-observed blocks must not reach nanstd: numpy warns on them
+        through warnings.warn, once per scored miner and block size."""
+        real_price_path = make_hourly_paths(1, seed=18)
+        real_price_path[0, 6:10] = np.nan
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            block_volatilities(real_price_path, 5)
+            # A single return per block never has a standard deviation.
+            block_volatilities(real_price_path, 1)
 
     def test_calculate_vol_crps_for_miner_perfect_prediction(self):
         real_price_path = make_hourly_paths(1, seed=5)[0]
