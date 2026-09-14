@@ -29,7 +29,7 @@ import bittensor as bt
 from synth.db.models import MinerPrediction, ValidatorRequest
 from synth.utils.helpers import adjust_predictions
 from synth.utils.logging import print_execution_time
-from synth.validator.crps_calculation import calculate_crps_for_miner
+from synth.validator.crps_calculation import calculate_total_score_for_miner
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.price_data_provider import PriceDataProvider
 from synth.validator import response_validation_v2
@@ -48,6 +48,7 @@ def _crps_worker(args):
         prices_shape,
         time_increment,
         scoring_intervals,
+        vol_scoring_blocks,
         format_validation,
         prediction_id,
         process_time,
@@ -98,11 +99,12 @@ def _crps_worker(args):
 
         try:
             simulation_runs = np.array(prediction_array).astype(float)
-            score, detailed_crps_data = calculate_crps_for_miner(
+            score, detailed_crps_data = calculate_total_score_for_miner(
                 simulation_runs,
                 real_prices,  # Already a numpy array from shared memory
                 int(time_increment),
                 scoring_intervals,
+                vol_scoring_blocks,
             )
 
             if not np.isfinite(score):
@@ -162,6 +164,7 @@ def _prepare_work_items(
     prices_shape: tuple,
     validator_request: ValidatorRequest,
     scoring_intervals: dict,
+    vol_scoring_blocks: dict,
 ) -> list[tuple]:
     """Prepare picklable work items for multiprocess CRPS calculation."""
     work_items = []
@@ -185,6 +188,7 @@ def _prepare_work_items(
                 prices_shape,
                 int(validator_request.time_increment),
                 scoring_intervals,
+                vol_scoring_blocks,
                 format_val,
                 int(pred.id),
                 (
@@ -268,7 +272,7 @@ def get_rewards_multiprocess(
     - miner_data_handler (MinerDataHandler): The handler for miner data.
     - price_data_provider (PriceDataProvider): The provider for price data.
     - validator_request (ValidatorRequest): The validator request object.
-    - comp (CompetitionConfig): The competition being scored; supplies the scoring intervals used for CRPS.
+    - comp (CompetitionConfig): The competition being scored; supplies the scoring intervals and volatility blocks used for CRPS.
     - nprocs (int): Number of processes to use for parallel computation.
 
     Returns:
@@ -314,6 +318,7 @@ def get_rewards_multiprocess(
         prices_array.shape,
         validator_request,
         comp.scoring_intervals,
+        comp.vol_scoring_blocks,
     )
 
     # Process in parallel (CPU bound - use ProcessPool)

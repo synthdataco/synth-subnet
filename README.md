@@ -56,7 +56,7 @@
 
 ## 🔭 1. Overview
 
-> **TL;DR** — Miners submit ensembles of simulated price paths for a basket of crypto, equity, and commodity assets across two timeframes (`24h` and `1h`). Validators score each ensemble with CRPS on price changes over multiple time increments, take a rolling weighted average within a per-timeframe window (10 days for `24h`, 5 days for `1h`), and allocate emissions via softmax — equally split between 3 competitions: Crypto 1h, Crypto 24h, Commodities/Equities 24h. Lower CRPS → more emissions.
+> **TL;DR** — Miners submit ensembles of simulated price paths for a basket of crypto, equity, and commodity assets across two timeframes (`24h` and `1h`). Validators score each ensemble with CRPS on price changes over multiple time increments (plus realized volatility for Crypto 1h), take a rolling weighted average within a per-timeframe window (10 days for `24h`, 5 days for `1h`), and allocate emissions via softmax — equally split between 3 competitions: Crypto 1h, Crypto 24h, Commodities/Equities 24h. Lower CRPS → more emissions.
 
 ### 1.1. Introduction
 
@@ -214,7 +214,25 @@ For each time increment:
 - **Observed Price Changes**: The real asset prices are used to calculate the observed price changes in basis points over the same intervals. The validator scores against 1-minute candle close prices — Binance spot for BTC/ETH/SOL/XRP, Hyperliquid spot for HYPE, Hyperliquid perps for equities/commodities (see the asset maps in `synth/validator/price_data_provider.py`).
 - **CRPS Calculation**: The CRPS is calculated for each increment by comparing the ensemble of predicted changes in basis points to the observed price change.
 
-The final score for a miner for a single checking prompt is the sum of these CRPS values over all the time increments.
+The price score for a miner for a single checking prompt is the sum of these CRPS values over all the time increments. For `crypto-1h` a volatility term is added on top of it, as described next.
+
+#### Volatility Component (`crypto-1h` only)
+
+The `crypto-1h` score also scores **realized volatility**. The hour is cut into consecutive blocks of three sizes — one 60-minute block, four 15-minute blocks and twelve 5-minute blocks. For every block, the standard deviation of the 1-minute price changes in basis points inside that block is computed for each simulated path and for the realized path, and the CRPS compares the ensemble of simulated block volatilities to the realized one. A block with fewer than two observed 1-minute changes is skipped.
+
+Writing $S_{60}$, $S_{15}$ and $S_5$ for the sums of those CRPS values over the blocks of each size, the volatility term is the mean, over the three block sizes, of the mean CRPS per block:
+
+$$
+\text{vol CRPS} = \frac{1}{3}\left(\frac{S_{60}}{1} + \frac{S_{15}}{4} + \frac{S_{5}}{12}\right)
+$$
+
+so the total `crypto-1h` prompt score, with $\lambda = 5.25$, is
+
+$$
+\text{score} = \text{price CRPS} + \lambda \cdot \text{vol CRPS} = \text{price CRPS} + 1.75 \, S_{60} + 0.4375 \, S_{15} + 0.1458 \, S_{5}
+$$
+
+The `crypto-24h` and `com-equ-24h` scores have no volatility term.
 
 <sup>[Back to top ^][table-of-contents]</sup>
 

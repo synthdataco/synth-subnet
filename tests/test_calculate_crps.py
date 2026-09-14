@@ -1,14 +1,27 @@
 import unittest
+import warnings
 
 import numpy as np
+from properscoring import crps_ensemble
 
 from synth.validator import competition_config
 from synth.validator.crps_calculation import (
+    block_volatilities,
     calculate_crps_for_miner,
     calculate_price_changes_over_intervals,
+    calculate_total_score_for_miner,
+    calculate_vol_crps_for_miner,
     label_observed_blocks,
 )
 from synth.validator.reward import compute_softmax
+
+
+def make_hourly_paths(n_paths: int, seed: int) -> np.ndarray:
+    """Deterministic 1-minute price paths over an hour: 61 points each."""
+    rng = np.random.default_rng(seed)
+    steps = rng.normal(0, 0.001, size=(n_paths, 60))
+    prices = 100 * np.cumprod(1.0 + steps, axis=1)
+    return np.hstack([np.full((n_paths, 1), 100.0), prices])
 
 
 class TestCalculateCrps(unittest.TestCase):
@@ -482,3 +495,216 @@ class TestCalculateCrps(unittest.TestCase):
         self.assertIn("Gaps", [d["Interval"] for d in details_gap])
         self.assertNotIn("Gaps", [d["Interval"] for d in details_reg])
         self.assertNotEqual(score_gap, score_reg)
+
+
+class TestVolCrps(unittest.TestCase):
+    def test_block_volatilities_value(self):
+        # Returns in bps are [100.0, 99.00990099]; one block of 2 steps.
+        volatilities = block_volatilities(np.array([[100.0, 101.0, 102.0]]), 2)
+
+        self.assertEqual(volatilities.shape, (1, 1))
+        self.assertAlmostEqual(volatilities[0, 0], 0.7001057239470748)
+
+    def test_block_volatilities_block_counts(self):
+        """The 1h blocks partition the hour into 1, 4 and 12 blocks."""
+        paths = make_hourly_paths(5, seed=1)
+
+        self.assertEqual(block_volatilities(paths, 60).shape, (5, 1))
+        self.assertEqual(block_volatilities(paths, 15).shape, (5, 4))
+        self.assertEqual(block_volatilities(paths, 5).shape, (5, 12))
+
+    def test_block_volatilities_drops_incomplete_block(self):
+        # 7 returns with 3-step blocks: the trailing return is dropped.
+        paths = make_hourly_paths(1, seed=2)[:, :8]
+
+        self.assertEqual(block_volatilities(paths, 3).shape, (1, 2))
+
+    def test_block_volatilities_needs_two_returns(self):
+        paths = make_hourly_paths(1, seed=3)
+
+        # A single return per block has no standard deviation.
+        self.assertTrue(np.all(np.isnan(block_volatilities(paths, 1))))
+
+    def test_block_volatilities_nan_returns(self):
+        real_price_path = make_hourly_paths(1, seed=4)
+        # Blanking 4 of the 5 prices of the second block leaves it with a
+        # single observed return.
+        real_price_path[0, 6:10] = np.nan
+
+        volatilities = block_volatilities(real_price_path, 5)
+
+        self.assertFalse(np.isnan(volatilities[0, 0]))
+        self.assertTrue(np.isnan(volatilities[0, 1]))
+        self.assertFalse(np.isnan(volatilities[0, 2]))
+
+    def test_block_volatilities_does_not_warn_on_gappy_blocks(self):
+        """Under-observed blocks must not reach nanstd: numpy warns on them
+        through warnings.warn, once per scored miner and block size."""
+        real_price_path = make_hourly_paths(1, seed=18)
+        real_price_path[0, 6:10] = np.nan
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            block_volatilities(real_price_path, 5)
+            # A single return per block never has a standard deviation.
+            block_volatilities(real_price_path, 1)
+
+    def test_calculate_vol_crps_for_miner_perfect_prediction(self):
+        real_price_path = make_hourly_paths(1, seed=5)[0]
+
+        score, detailed = calculate_vol_crps_for_miner(
+            np.array([real_price_path]),
+            real_price_path,
+            60,
+            competition_config.CRYPTO_1H.vol_scoring_blocks,
+        )
+
+        self.assertEqual(score, 0.0)
+        self.assertEqual(
+            [d["Interval"] for d in detailed],
+            ["vol_60min", "vol_15min", "vol_5min", "Vol"],
+        )
+
+    def test_calculate_vol_crps_for_miner_weight_scales_the_sum(self):
+        simulation_runs = make_hourly_paths(16, seed=6)
+        real_price_path = make_hourly_paths(1, seed=7)[0]
+
+        score, detailed = calculate_vol_crps_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            {"vol_15min": (900, 1.0)},
+        )
+        doubled_score, doubled_detailed = calculate_vol_crps_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            {"vol_15min": (900, 2.0)},
+        )
+
+        self.assertGreater(score, 0)
+        self.assertAlmostEqual(doubled_score, 2 * score)
+        # The per-block-size row keeps the unweighted sum over the blocks.
+        self.assertAlmostEqual(detailed[0]["CRPS"], score)
+        self.assertAlmostEqual(doubled_detailed[0]["CRPS"], score)
+
+    def test_calculate_vol_crps_for_miner_sums_over_the_blocks(self):
+        simulation_runs = make_hourly_paths(16, seed=8)
+        real_price_path = make_hourly_paths(1, seed=9)[0]
+
+        score, _ = calculate_vol_crps_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            {"vol_15min": (900, 1.0)},
+        )
+
+        simulated_vol = block_volatilities(simulation_runs, 15)
+        real_vol = block_volatilities(real_price_path.reshape(1, -1), 15)[0]
+        expected = sum(
+            crps_ensemble(real_vol[block], simulated_vol[:, block])
+            for block in range(4)
+        )
+
+        self.assertAlmostEqual(score, float(expected))
+
+    def test_calculate_vol_crps_for_miner_skips_unobserved_blocks(self):
+        simulation_runs = make_hourly_paths(16, seed=10)
+        real_price_path = make_hourly_paths(1, seed=11)[0]
+        blanked_path = real_price_path.copy()
+        # Blanks the last 30 returns, so half of the 5min blocks have no
+        # observed return left.
+        blanked_path[31:] = np.nan
+
+        _, detailed = calculate_vol_crps_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            competition_config.CRYPTO_1H.vol_scoring_blocks,
+        )
+        _, blanked_detailed = calculate_vol_crps_for_miner(
+            simulation_runs,
+            blanked_path,
+            60,
+            competition_config.CRYPTO_1H.vol_scoring_blocks,
+        )
+
+        # Missing prices drop the blocks they cover, they do not fail the
+        # block size: every block size is still scored, on fewer blocks.
+        self.assertEqual(
+            [d["Interval"] for d in blanked_detailed],
+            ["vol_60min", "vol_15min", "vol_5min", "Vol"],
+        )
+        self.assertLess(blanked_detailed[2]["CRPS"], detailed[2]["CRPS"])
+
+    def test_calculate_total_score_for_miner_adds_the_vol_component(self):
+        simulation_runs = make_hourly_paths(16, seed=12)
+        real_price_path = make_hourly_paths(1, seed=13)[0]
+
+        price_score, _ = calculate_crps_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            competition_config.CRYPTO_1H.scoring_intervals,
+        )
+        vol_score, _ = calculate_vol_crps_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            competition_config.CRYPTO_1H.vol_scoring_blocks,
+        )
+        total_score, detailed = calculate_total_score_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            competition_config.CRYPTO_1H.scoring_intervals,
+            competition_config.CRYPTO_1H.vol_scoring_blocks,
+        )
+
+        self.assertGreater(vol_score, 0)
+        self.assertAlmostEqual(total_score, price_score + vol_score)
+
+        intervals = [d["Interval"] for d in detailed]
+        self.assertEqual(intervals.count("Overall"), 1)
+        self.assertEqual(intervals[-1], "Overall")
+        self.assertAlmostEqual(detailed[-1]["CRPS"], total_score)
+        self.assertTrue(all(d["Increment"] == "Total" for d in detailed))
+
+    def test_calculate_total_score_for_miner_without_vol_blocks(self):
+        simulation_runs = make_hourly_paths(16, seed=14)
+        real_price_path = make_hourly_paths(1, seed=15)[0]
+
+        price_score, price_detailed = calculate_crps_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            competition_config.CRYPTO_1H.scoring_intervals,
+        )
+        total_score, detailed = calculate_total_score_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            competition_config.CRYPTO_1H.scoring_intervals,
+            {},
+        )
+
+        self.assertEqual(total_score, price_score)
+        self.assertEqual(detailed, price_detailed)
+
+    def test_calculate_total_score_for_miner_zero_price(self):
+        simulation_runs = make_hourly_paths(2, seed=16)
+        simulation_runs[0, 30] = 0
+        real_price_path = make_hourly_paths(1, seed=17)[0]
+
+        total_score, detailed = calculate_total_score_for_miner(
+            simulation_runs,
+            real_price_path,
+            60,
+            competition_config.CRYPTO_1H.scoring_intervals,
+            competition_config.CRYPTO_1H.vol_scoring_blocks,
+        )
+
+        self.assertEqual(total_score, -1)
+        self.assertEqual(
+            detailed, [{"error": "Zero price encountered in simulation runs"}]
+        )
