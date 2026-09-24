@@ -82,8 +82,8 @@ def test_absurd_response_does_not_poison_the_fill_for_missed_responses():
     Prices are only rejected above the float32 ceiling, so an accepted response
     can carry an enormous CRPS. Uncapped, a small minority of those pulls the
     p95 up — and p95 is what fills a MISSED response, so a miner that merely
-    timed out inherits the value, exp(beta * score) underflows to exactly 0, and
-    compute_smoothed_score drops it from the rewards list for the whole window.
+    timed out inherits the value and exp(beta * score) underflows to exactly 0
+    for the whole window.
 
     The miss must come back with a bad-but-survivable score, not an
     astronomical one.
@@ -110,8 +110,7 @@ def test_absurd_response_does_not_poison_the_fill_for_missed_responses():
 
     # What actually decides whether a miner is paid: the prompt is averaged
     # into a ~10-day window. Uncapped, one poisoned row dominated that mean and
-    # exp(beta * mean) underflowed to a hard zero, which compute_smoothed_score
-    # drops from the rewards list entirely.
+    # exp(beta * mean) underflowed to a hard zero reward weight.
     window = 1900
 
     def mean_with(row):
