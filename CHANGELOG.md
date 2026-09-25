@@ -1,12 +1,30 @@
 # Changelog
 
-## Unreleased · Crypto 1h volatility scoring
+## v1.13.0 — 2026-09-22 · Crypto 1h volatility scoring
+
+Live 2026-09-22 at 1 PM UTC:
 
 - **The Crypto 1h score now includes a volatility term.** On top of the CRPS on price changes, the 1h prompt score also scores realized volatility: the hour is cut into consecutive blocks of three sizes — one 60-minute, four 15-minute and twelve 5-minute — and for every block the standard deviation of the 1-minute price changes in basis points is CRPS-scored against the realized one. Writing `S60`, `S15` and `S5` for the sums of those CRPS values over the blocks of each size, the score becomes `price CRPS + λ × (S60/1 + S15/4 + S5/12) / 3` = `price CRPS + 1.75·S60 + 0.4375·S15 + 0.1458·S5`, with `λ = 5.25`. Full spec in [README §1.3](https://github.com/synthdataco/synth-subnet/blob/main/README.md#volatility-component-crypto-1h-only)
-- **Miner action required (`crypto-1h` only):** no configuration or response-format change, but a simulator whose per-minute volatility structure is miscalibrated now pays for it even when its price levels are right — worth revisiting before this goes live. `crypto-24h` and `com-equ-24h` scoring is unchanged
-- The [synth-lib backtester](https://github.com/synthdataco/synth-lib) replays the new term, so the impact on your own predictions can be measured before the switch
+- **Miner action required (`crypto-1h` only):** no configuration or response-format change, but a simulator whose per-minute volatility structure is miscalibrated now pays for it even when its price levels are right. `crypto-24h` and `com-equ-24h` scoring is unchanged
+- The [synth-lib backtester](https://github.com/synthdataco/synth-lib) replays the new term, and selects it by the prompt's scored time, so a window spanning the switch is scored the way the validator scored it
+- Base miner: axon responses are gzip-compressed ([#319](https://github.com/synthdataco/synth-subnet/pull/319))
 
-## Unreleased — scheduled for 2026-07-23
+## v1.12.0 — 2026-09-04 · Outlier cap, and a 4th competition
+
+Released 2026-08-31, live 2026-09-04:
+
+- **Absurd CRPS values are clipped before anything is derived from them.** A valid response above `10x` the field's median raw CRPS is clipped to that ceiling, and the clip is taken on the raw CRPS — before the best score is subtracted — because raw CRPS has a stable positive scale set by the asset's price, while post-subtraction scores start at 0 and a tightly-bunched field would put a median-multiple cap on legitimate scores. The p95 that fills **missed** responses is then taken over the scores that were _not_ clipped: clipping alone is not enough, since once more than 5% of the field is garbage the p95 lands on the ceiling itself and a miner that merely timed out inherits a near-fatal score it had no part in producing. Submit garbage and you are clipped and ranked last; miss a prompt and you are scored like the 95th percentile of the miners who answered ([#320](https://github.com/synthdataco/synth-subnet/pull/320))
+- The clip is recorded per row so the rate stays monitorable — if it ever climbs, someone may be provoking it deliberately to inflate the field
+- **Miner action required: none.** A well-behaved response is unaffected; the ceiling sits at 10x the median and only outliers reach it
+- Synth Ultra (VHFT) is blended in as a 4th competition, through the external-ingestion path rather than the inline-CRPS one ([#320](https://github.com/synthdataco/synth-subnet/pull/320))
+
+## v1.11.1 — 2026-09-03
+
+- Pyth and SPYX are removed: the SPYX retirement tail that began in v1.11.0 has ended, so the Pyth data provider and the SPYX code paths are gone ([#312](https://github.com/synthdataco/synth-subnet/pull/312))
+- Response validation rejects prices outside the float32 range, and non-finite CRPS detail is dropped rather than stored: predictions are persisted as float32, so a path that overflows on the way in produced a non-finite CRPS and took a whole scoring batch with it ([#311](https://github.com/synthdataco/synth-subnet/pull/311))
+- Research: TimesFM report added under `research/` ([#313](https://github.com/synthdataco/synth-subnet/pull/313))
+
+## v1.11.0 — 2026-07-23
 
 - Emission burn removed: so 100% of miner emission goes to miners again (the owner had taken ~50% since 2025-10-17).
 - Price feeds migrate off Pyth: validator ground-truth candles and the reference miner's spot price now come from **Binance spot** for BTC/ETH/SOL/XRP (`BTCUSDT`, …), **Hyperliquid spot** for HYPE (`HYPE/USDC`), and **Hyperliquid perps** for equities/commodities (`xyz:*`). The reference miner no longer uses `PYTH_API_KEY`, Pyth Lazer, or Pyth Hermes (Hermes remains only to serve SPYX prompts from not-yet-upgraded validators during the rollout)
