@@ -16,10 +16,12 @@
 # DEALINGS IN THE SOFTWARE.
 
 import copy
+import logging
 
 import bittensor as bt
 from bittensor.core.metagraph import MetagraphMixin
 from tenacity import (
+    before_log,
     retry,
     stop_after_attempt,
     wait_random_exponential,
@@ -84,7 +86,7 @@ class BaseNeuron(ABC):
 
         # The wallet holds the cryptographic key pairs for the miner.
         self.wallet = bt.Wallet(config=self.config)
-        self.subtensor = bt.Subtensor(config=self.config)
+        self.subtensor = self._connect_subtensor()
         self.metagraph = self._initial_metagraph_fetch()
 
         bt.logging.info(f"Wallet: {self.wallet}")
@@ -106,6 +108,26 @@ class BaseNeuron(ABC):
     @retry(
         stop=stop_after_attempt(10),
         wait=wait_random_exponential(multiplier=2, max=120),
+        before=before_log(bt.logging._logger, logging.DEBUG),
+        reraise=True,
+    )
+    def _connect_subtensor(self) -> bt.Subtensor:
+        """Open the chain connection, retrying transient failures.
+
+        bt.Subtensor() opens the websocket in its constructor, so a blip on
+        the chain endpoint raises here and — being in __init__, outside the
+        run loop's error handling — takes the whole process down. The
+        long-running cycles tolerate the same timeouts because they catch
+        them and carry on with the previous metagraph; startup had no such
+        path, so a few seconds of unreachable endpoint cost a restart plus
+        however long kubelet's backoff had grown.
+        """
+        return bt.Subtensor(config=self.config)
+
+    @retry(
+        stop=stop_after_attempt(10),
+        wait=wait_random_exponential(multiplier=2, max=120),
+        before=before_log(bt.logging._logger, logging.DEBUG),
         reraise=True,
     )
     def _initial_metagraph_fetch(self) -> MetagraphMixin:
@@ -142,12 +164,22 @@ class BaseNeuron(ABC):
         # Always save state.
         self.save_state()
 
-    def check_registered(self):
-        # --- Check for registration.
-        if not self.subtensor.is_hotkey_registered(
+    @retry(
+        stop=stop_after_attempt(10),
+        wait=wait_random_exponential(multiplier=2, max=120),
+        before=before_log(bt.logging._logger, logging.DEBUG),
+        reraise=True,
+    )
+    def _is_hotkey_registered(self) -> bool:
+        return self.subtensor.is_hotkey_registered(
             netuid=self.config.netuid,
             hotkey_ss58=self.wallet.hotkey.ss58_address,
-        ):
+        )
+
+    def check_registered(self):
+        # --- Check for registration. Only the chain query is retried; an
+        # answer of "not registered" is final and still exits.
+        if not self._is_hotkey_registered():
             bt.logging.error(
                 f"Wallet: {self.wallet} is not registered on netuid {self.config.netuid}."
                 f" Please register the hotkey using `btcli subnets register` before trying again"
