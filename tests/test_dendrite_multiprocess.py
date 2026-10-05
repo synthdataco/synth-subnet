@@ -58,6 +58,33 @@ def test_results_keep_axon_order_when_chunks_finish_out_of_order(
     assert results == [[[uid], "0.1"] for uid in range(10)]
 
 
+def test_failed_chunk_waits_for_running_siblings(monkeypatch, stub_signing):
+    started, finished = [], []
+
+    def fake_run_chunk(*args):
+        uid = args[6][0][0]["uid"]
+        started.append(uid)
+        if uid == 0:
+            # Fail once the sibling is running.
+            time.sleep(0.05)
+            raise ValueError("chunk failed")
+        time.sleep(0.2)
+        finished.append(uid)
+        return []
+
+    monkeypatch.setattr(dendrite_multiprocess, "run_chunk", fake_run_chunk)
+    with ThreadPoolExecutor(2) as executor:
+        monkeypatch.setattr(
+            dendrite_multiprocess,
+            "get_process_executor",
+            lambda nprocs: executor,
+        )
+        with pytest.raises(ValueError):
+            _forward([_fake_axon(uid) for uid in range(2)], nprocs=2)
+        assert sorted(started) == [0, 1]
+        assert finished == [1]
+
+
 def test_broken_pool_is_dropped_for_next_cycle(monkeypatch, stub_signing):
     class BrokenExecutor:
         def submit(self, *args):

@@ -361,9 +361,11 @@ def sync_forward_multiprocess(
     synapse_body = synapse.model_dump()
 
     executor = get_process_executor(nprocs)
+    futures: dict = {}
+    chunk_results: list = [None] * len(chunks)
     try:
-        futures = {
-            executor.submit(
+        for chunk_index, chunk in enumerate(chunks):
+            future = executor.submit(
                 run_chunk,
                 ss58_address,
                 nonce,
@@ -373,15 +375,18 @@ def sync_forward_multiprocess(
                 synapse_body,
                 chunk,
                 timeout,
-            ): chunk_index
-            for chunk_index, chunk in enumerate(chunks)
-        }
-        chunk_results: list = [None] * len(chunks)
+            )
+            futures[future] = chunk_index
         for future in concurrent.futures.as_completed(futures):
             chunk_results[futures[future]] = future.result()
     except BrokenProcessPool:
         _PROCESS_EXECUTOR = None
         raise
+    finally:
+        # No chunk may outlive this call in the shared pool.
+        for future in futures:
+            future.cancel()
+        concurrent.futures.wait(futures)
 
     return [result for chunk in chunk_results for result in chunk]
 
