@@ -116,58 +116,89 @@ def validate_responses(
     if the response is not following the expected format or the response is empty,
     otherwise, return "CORRECT".
     """
+    format_validation, _ = validate_responses_with_paths(
+        response, simulation_input, process_time_str
+    )
+    return format_validation
+
+
+def validate_responses_with_paths(
+    response,
+    simulation_input: SimulationInput,
+    process_time_str: typing.Optional[str],
+) -> tuple[str, typing.Any]:
+    """Same as validate_responses, also returning the paths as a 2-D
+    ndarray when CORRECT (the paths list when no numeric matrix was built),
+    None otherwise."""
     # check the process time
     if process_time_str is None:
-        return "time out or internal server error (process time is None)"
+        return "time out or internal server error (process time is None)", None
 
     start_time = datetime.fromisoformat(simulation_input.start_time)
 
     error_message = validate_response_type(response)
     if error_message:
-        return error_message
+        return error_message, None
 
     # check the start time
     first_time_timestamp: int = response[0]
     expected_first_time_timestamp = int(start_time.timestamp())
     if first_time_timestamp != expected_first_time_timestamp:
-        return f"Start time timestamp is incorrect: expected {expected_first_time_timestamp}, got {first_time_timestamp}"
+        return (
+            f"Start time timestamp is incorrect: expected {expected_first_time_timestamp}, got {first_time_timestamp}",
+            None,
+        )
 
     # check the time increment
     time_increment: int = response[1]
     expected_time_increment = simulation_input.time_increment
     if time_increment != expected_time_increment:
-        return f"Time increment is incorrect: expected {expected_time_increment}, got {time_increment}"
+        return (
+            f"Time increment is incorrect: expected {expected_time_increment}, got {time_increment}",
+            None,
+        )
 
     number_of_paths = len(response[2:])
     # check the number of paths
     if number_of_paths != simulation_input.num_simulations:
-        return f"Number of paths is incorrect: expected {simulation_input.num_simulations}, got {number_of_paths}"
+        return (
+            f"Number of paths is incorrect: expected {simulation_input.num_simulations}, got {number_of_paths}",
+            None,
+        )
 
     all_paths = response[2:]
     expected_time_points = (
         simulation_input.time_length // simulation_input.time_increment + 1
     )
 
-    error_message = _validate_all_paths(all_paths, expected_time_points)
+    error_message, paths = _validate_all_paths(all_paths, expected_time_points)
     if error_message:
-        return error_message
+        return error_message, None
 
-    return CORRECT
+    return CORRECT, paths
 
 
 def _validate_all_paths(
     all_paths, expected_time_points: int
-) -> typing.Optional[str]:
+) -> tuple[typing.Optional[str], typing.Any]:
     """Validate every path's shape and points, first offender wins.
 
     Points are bulk-validated in one NumPy pass; anything not provably
     valid is re-checked with the exact scalar rule in original scan order.
+    Returns the error (or None) and the numeric matrix when one was built,
+    else `all_paths` itself.
     """
     for path in all_paths:
         if not isinstance(path, list):
-            return f"Path format is incorrect: expected list, got {type(path)}"
+            return (
+                f"Path format is incorrect: expected list, got {type(path)}",
+                None,
+            )
         if len(path) != expected_time_points:
-            return f"Number of time points is incorrect: expected {expected_time_points}, got {len(path)}"
+            return (
+                f"Number of time points is incorrect: expected {expected_time_points}, got {len(path)}",
+                None,
+            )
 
     try:
         matrix = np.asarray(all_paths)
@@ -175,17 +206,17 @@ def _validate_all_paths(
         matrix = None
 
     if matrix is None or matrix.ndim != 2 or matrix.dtype.kind not in "iuf":
-        return _validate_points_exact(all_paths)
+        return _validate_points_exact(all_paths), all_paths
 
     proven = _sig_digits_pass_mask(matrix)
     if proven.all():
-        return None
+        return None, matrix
 
     for i, j in zip(*np.nonzero(~proven)):
         error_message = _point_error(all_paths[i][j])
         if error_message:
-            return error_message
-    return None
+            return error_message, None
+    return None, matrix
 
 
 def _validate_points_exact(all_paths) -> typing.Optional[str]:

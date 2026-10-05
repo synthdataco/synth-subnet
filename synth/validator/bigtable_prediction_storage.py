@@ -117,6 +117,9 @@ class BigtablePredictionStorage:
     ) -> dict:
         """Write CORRECT predictions for one request to Bigtable.
 
+        `miner_predictions` values carry the paths already encoded with
+        `encode_paths` in place of the wire prediction.
+
         Returns {miner_uid: bigtable_key} for rows that were successfully
         committed. Miners whose response failed format validation or whose
         miner_uid is not in miner_id_map are skipped. If any mutate fails,
@@ -133,7 +136,7 @@ class BigtablePredictionStorage:
         row_sizes = []
         keys_by_miner_uid: dict = {}
         for miner_uid, (
-            prediction,
+            blob,
             format_validation,
             _process_time,
         ) in miner_predictions.items():
@@ -150,7 +153,6 @@ class BigtablePredictionStorage:
             key = self.build_row_key(
                 simulation_input.asset, start_time_unix, miner_id
             )
-            blob = _paths_to_float32_bytes(prediction)
 
             row = table.direct_row(key)
             row.set_cell(COLUMN_FAMILY, COLUMN_QUALIFIER, blob)
@@ -368,15 +370,14 @@ def _start_time_to_unix(start_time_str: str) -> int:
     return int(dt.timestamp())
 
 
-def _paths_to_float32_bytes(prediction) -> bytes:
-    """Convert a validator-format prediction to raw float32 bytes.
+def encode_paths(paths) -> bytes:
+    """Convert prediction paths (ndarray or list of lists) to the raw float32
+    bytes stored in Bigtable.
 
-    The on-the-wire prediction is `[start_ts, time_increment, path1, ...,
-    pathN]` where each path is a list of floats. Only the paths are stored in
-    Bigtable; the header is reconstructed from validator_requests metadata on
+    Only the paths are stored, not the `[start_ts, time_increment]` wire
+    header; the header is reconstructed from validator_requests metadata on
     read.
     """
-    paths = prediction[2:]
     return np.asarray(paths, dtype=np.float32).tobytes()
 
 
