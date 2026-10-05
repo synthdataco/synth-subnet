@@ -563,10 +563,35 @@ class TestComputeSmoothedScore:
         result = compute_smoothed_score(handler, df, _ts(120), CRYPTO_24H)
 
         assert result is not None
-        # Miner 2 has inf rolling avg -> zero softmax weight -> filtered out
+        # Miner 2 has inf rolling avg -> filtered out
         miner_ids = [r["miner_id"] for r in result]
         assert 1 in miner_ids
         assert 2 not in miner_ids
+
+    def test_zero_weight_miner_keeps_its_row(self):
+        """A miner whose softmax weight underflows to 0 is still returned."""
+        t = _ts(0)
+        df = pd.DataFrame(
+            {
+                "miner_id": [1, 1, 2, 2],
+                "prompt_score_v3": [0.005, 0.003, 1e6, 1e6],
+                "scored_time": [t, _ts(60), t, _ts(60)],
+                "asset": ["BTC", "BTC", "BTC", "BTC"],
+            }
+        )
+        df["scored_time"] = pd.to_datetime(df["scored_time"], utc=True)
+
+        handler = _mock_handler({1: 10, 2: 11})
+        result = compute_smoothed_score(handler, df, _ts(120), CRYPTO_24H)
+
+        assert result is not None
+        rewards = {r["miner_id"]: r for r in result}
+        assert set(rewards) == {1, 2}
+        assert rewards[2]["reward_weight"] == 0.0
+        assert rewards[2]["smoothed_score"] == pytest.approx(1e6)
+        assert rewards[1]["reward_weight"] == pytest.approx(
+            SMOOTHED_SCORE_COEFFICIENT
+        )
 
     def test_multiple_assets_weighted(self):
         """Scores from different assets should be weighted by their coefficients."""

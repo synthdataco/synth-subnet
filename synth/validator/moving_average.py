@@ -180,11 +180,13 @@ def compute_smoothed_score(
         np.array(rolling_avg_list), comp.softmax_beta
     )
 
+    # A zero reward_weight still gets a row; only miners with no valid scores
+    # (inf rolling average) are left out.
     rewards = []
     for item, reward_weight in zip(
         filtered_moving_averages_data, reward_weight_list
     ):
-        if float(reward_weight) > 0:
+        if np.isfinite(item["rolling_avg"]):
             rewards.append(
                 {
                     "miner_id": item["miner_id"],
