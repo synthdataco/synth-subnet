@@ -1,5 +1,6 @@
 import sys
 import threading
+import traceback
 import logging.handlers
 import time
 from typing import Union
@@ -17,6 +18,10 @@ import uvloop
 from synth.base.dendrite import process_error_message
 from synth.protocol import Simulation
 from synth.simulation_input import SimulationInput
+from synth.validator.bigtable_prediction_storage import encode_paths
+from synth.validator.response_validation_v2 import (
+    validate_responses_with_paths,
+)
 
 
 class SubstringFilter(logging.Filter):
@@ -159,6 +164,8 @@ async def call(
     synapse_headers: dict,
     synapse_body: dict,
     timeout: float,
+    simulation_input: SimulationInput,
+    float32_output: bool,
 ):
     start_time = time.time()
     target_axon = (
@@ -216,7 +223,34 @@ async def call(
             f"dendrite | <-- | {synapse.get_total_size()} B | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | {synapse.dendrite.status_code} | {synapse.dendrite.status_message}"
         )
 
-        return [synapse.simulation_output, synapse.dendrite.process_time]
+        return validate_output(
+            synapse.simulation_output,
+            simulation_input,
+            synapse.dendrite.process_time,
+            float32_output,
+        )
+
+
+def validate_output(
+    simulation_output,
+    simulation_input: SimulationInput,
+    process_time: str | None,
+    float32_output: bool,
+) -> list:
+    """Return `[output, format_validation, process_time]`. With
+    `float32_output` the output is the `encode_paths` blob when CORRECT,
+    None otherwise."""
+    paths = None
+    try:
+        format_validation, paths = validate_responses_with_paths(
+            simulation_output, simulation_input, process_time
+        )
+    except Exception:
+        format_validation = "error during validation"
+        traceback.print_exc(file=sys.stderr)
+    if float32_output:
+        simulation_output = None if paths is None else encode_paths(paths)
+    return [simulation_output, format_validation, process_time]
 
 
 async def worker(
@@ -228,7 +262,9 @@ async def worker(
     synapse_body: dict,
     axon_sig_pairs: list,
     timeout: float,
+    float32_output: bool,
 ):
+    simulation_input = SimulationInput(**synapse_body["simulation_input"])
     async with httpx.AsyncClient(
         http2=True,
         limits=httpx.Limits(
@@ -251,6 +287,8 @@ async def worker(
                     synapse_headers=synapse_headers,
                     synapse_body=synapse_body,
                     timeout=timeout,
+                    simulation_input=simulation_input,
+                    float32_output=float32_output,
                 )
                 for axon_dict, signature in axon_sig_pairs
             )
@@ -266,6 +304,7 @@ def run_chunk(
     synapse_body: dict,
     axon_sig_pairs: list,
     timeout: float,
+    float32_output: bool,
 ):
     try:
         return asyncio.run(
@@ -278,6 +317,7 @@ def run_chunk(
                 synapse_body,
                 axon_sig_pairs,
                 timeout,
+                float32_output,
             )
         )
     except EOFError:
@@ -341,9 +381,10 @@ def sync_forward_multiprocess(
     synapse: Simulation,
     timeout: float,
     nprocs: int = 2,
+    float32_output: bool = False,
 ) -> list[list]:
-    """Query every axon and return `[simulation_output, process_time]`
-    pairs in the same order as `axons`."""
+    """Query and validate every axon; return `validate_output` results in
+    the same order as `axons`."""
     global _PROCESS_EXECUTOR
     bt.logging.debug(
         f"Starting multiprocess forward with {nprocs} processes.", "dendrite"
@@ -375,6 +416,7 @@ def sync_forward_multiprocess(
                 synapse_body,
                 chunk,
                 timeout,
+                float32_output,
             )
             futures[future] = chunk_index
         for future in concurrent.futures.as_completed(futures):

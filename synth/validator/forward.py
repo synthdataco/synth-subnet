@@ -19,8 +19,6 @@
 from datetime import datetime, timedelta
 import random
 import time
-import sys
-import traceback
 
 import bittensor as bt
 import numpy as np
@@ -38,7 +36,6 @@ from synth.utils.helpers import (
 from synth.utils.logging import print_execution_time
 from synth.utils.uids import check_uid_availability
 from synth.validator import competition_config
-from synth.validator.bigtable_prediction_storage import encode_paths
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.prediction_notifier import PredictionNotifier
 from synth.validator.moving_average import (
@@ -49,9 +46,6 @@ from synth.validator.moving_average import (
     print_rewards_df,
 )
 from synth.validator.price_data_provider import PriceDataProvider
-from synth.validator.response_validation_v2 import (
-    validate_responses_with_paths,
-)
 from synth.validator.reward import (
     get_rewards_multiprocess,
     print_scores_df,
@@ -242,6 +236,7 @@ def query_available_miners_and_save_responses(
     #     timeout=timeout,
     # )
 
+    # The Bigtable backend takes the paths as float32 bytes, not wire lists.
     responses = sync_forward_multiprocess(
         base_neuron.dendrite.keypair,
         base_neuron.dendrite.uuid,
@@ -250,6 +245,7 @@ def query_available_miners_and_save_responses(
         synapse,
         timeout,
         base_neuron.config.neuron.nprocs,
+        float32_output=miner_data_handler.bigtable_storage is not None,
     )
 
     total_process_time = str(time.time() - start_time)
@@ -258,26 +254,10 @@ def query_available_miners_and_save_responses(
         "base_neuron.dendrite.forward",
     )
 
-    # The Bigtable backend takes the paths as float32 bytes, not wire lists.
-    float32_output = miner_data_handler.bigtable_storage is not None
-    miner_predictions = {}
-    for i, (response, process_time) in enumerate(responses):
-        paths = None
-        try:
-            format_validation, paths = validate_responses_with_paths(
-                response, simulation_input, process_time
-            )
-        except Exception:
-            format_validation = "error during validation"
-            traceback.print_exc(file=sys.stderr)
-        if float32_output:
-            response = None if paths is None else encode_paths(paths)
-        miner_id = miner_uids[i]
-        miner_predictions[miner_id] = (
-            response,
-            format_validation,
-            process_time,
-        )
+    miner_predictions = {
+        miner_uid: tuple(result)
+        for miner_uid, result in zip(miner_uids, responses)
+    }
 
     if len(miner_predictions) > 0:
         validator_requests_id = miner_data_handler.save_responses(

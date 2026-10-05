@@ -8,6 +8,8 @@ import pytest
 from synth.base import dendrite_multiprocess
 from synth.protocol import Simulation
 from synth.simulation_input import SimulationInput
+from synth.validator.bigtable_prediction_storage import encode_paths
+from synth.validator.response_validation_v2 import CORRECT, validate_responses
 
 
 def _fake_axon(uid: int):
@@ -100,3 +102,68 @@ def test_broken_pool_is_dropped_for_next_cycle(monkeypatch, stub_signing):
         _forward([_fake_axon(0)], nprocs=1)
 
     assert dendrite_multiprocess._PROCESS_EXECUTOR is None
+
+
+_SIM_INPUT = SimulationInput(
+    start_time="2026-05-25T12:00:00+00:00",
+    time_increment=1,
+    time_length=2,
+    num_simulations=2,
+)
+_PATHS = [[65432.17, 65433.5, 65431.0], [65430.25, 65429.0, 65428.75]]
+_CORRECT_OUTPUT = [1779710400, 1, *_PATHS]
+
+
+@pytest.mark.parametrize(
+    "output, process_time",
+    [
+        (_CORRECT_OUTPUT, "1.0"),
+        ([1779710400, 1, [1.123456789, 2.0, 3.0], _PATHS[1]], "1.0"),
+        (None, None),  # timed out
+    ],
+)
+def test_validate_output_matches_validate_responses(output, process_time):
+    result = dendrite_multiprocess.validate_output(
+        output, _SIM_INPUT, process_time, float32_output=False
+    )
+
+    assert result == [
+        output,
+        validate_responses(output, _SIM_INPUT, process_time),
+        process_time,
+    ]
+
+
+def test_validate_output_returns_float32_blob_when_correct():
+    result = dendrite_multiprocess.validate_output(
+        _CORRECT_OUTPUT, _SIM_INPUT, "1.0", float32_output=True
+    )
+
+    assert result == [encode_paths(_PATHS), CORRECT, "1.0"]
+
+
+def test_validate_output_drops_invalid_output_as_float32():
+    result = dendrite_multiprocess.validate_output(
+        [1779710400, 1, [1.123456789, 2.0, 3.0], _PATHS[1]],
+        _SIM_INPUT,
+        "1.0",
+        float32_output=True,
+    )
+
+    assert result[0] is None
+    assert result[1] != CORRECT
+
+
+def test_validate_output_survives_validation_crash(monkeypatch):
+    def crash(*args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        dendrite_multiprocess, "validate_responses_with_paths", crash
+    )
+
+    result = dendrite_multiprocess.validate_output(
+        _CORRECT_OUTPUT, _SIM_INPUT, "1.0", float32_output=True
+    )
+
+    assert result == [None, "error during validation", "1.0"]
