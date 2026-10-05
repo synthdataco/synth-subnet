@@ -45,7 +45,7 @@ def _run_forward(monkeypatch, save_return):
     monkeypatch.setattr(
         forward_module,
         "sync_forward_multiprocess",
-        lambda *args, **kwargs: [[{"prediction": []}, "CORRECT", "1.0"]],
+        lambda *args, **kwargs: [[{"prediction": []}, "CORRECT", "1.0", None]],
     )
 
     saved_calls = []
@@ -54,7 +54,11 @@ def _run_forward(monkeypatch, save_return):
         bigtable_storage = None
 
         def save_responses(
-            self, miner_predictions, simulation_input, request_time
+            self,
+            miner_predictions,
+            simulation_input,
+            request_time,
+            bigtable_keys,
         ):
             saved_calls.append(miner_predictions)
             return save_return

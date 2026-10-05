@@ -130,6 +130,31 @@ class MinerDataHandler:
 
         return miner_Uid_map
 
+    def bigtable_row_keys(
+        self, simulation_input: SimulationInput, miner_uids: list
+    ) -> list | None:
+        """Bigtable row key per miner uid (None for uids missing from the
+        miners table); None when the lookup fails."""
+        try:
+            with self.engine.connect() as connection:
+                miner_id_map = self.get_miner_uids_map(connection)
+        except Exception as e:
+            bt.logging.exception(
+                f"in bigtable_row_keys (got an exception): {e}"
+            )
+            return None
+
+        return [
+            (
+                self.bigtable_storage.row_key(
+                    simulation_input, miner_id_map[miner_uid]
+                )
+                if miner_uid in miner_id_map
+                else None
+            )
+            for miner_uid in miner_uids
+        ]
+
     def get_latest_asset(self, time_length: int) -> str | None:
         try:
             with self.engine.connect() as connection:
@@ -163,12 +188,15 @@ class MinerDataHandler:
         miner_predictions: dict,
         simulation_input: SimulationInput,
         request_time: datetime,
+        bigtable_keys: dict | None = None,
     ):
         """Save miner predictions and simulation input.
 
         When `self.bigtable_storage` is set, CORRECT predictions are uploaded
         to Bigtable first; the Postgres `prediction` column then carries a
         sentinel JSON and `bigtable_key` carries the row key.
+        `bigtable_keys` ({miner_uid: key}) lists rows the dendrite workers
+        already wrote; only the other CORRECT predictions are uploaded here.
         """
 
         # Prepare the ValidatorRequest row from the simulation input:
@@ -198,12 +226,16 @@ class MinerDataHandler:
                     # Postgres write loop. If Postgres later fails the
                     # @retry wrapper above will replay, and orphan Bigtable
                     # rows age out via per-table GC policy.
-                    bigtable_keys: dict = {}
+                    stored_keys = dict(bigtable_keys or {})
                     if self.bigtable_storage is not None:
-                        bigtable_keys = (
+                        stored_keys.update(
                             self.bigtable_storage.write_predictions(
                                 simulation_input=simulation_input,
-                                miner_predictions=miner_predictions,
+                                miner_predictions={
+                                    miner_uid: prediction
+                                    for miner_uid, prediction in miner_predictions.items()
+                                    if miner_uid not in stored_keys
+                                },
                                 miner_id_map=miner_id_map,
                             )
                         )
@@ -225,11 +257,12 @@ class MinerDataHandler:
                         is_correct = (
                             format_validation == response_validation_v2.CORRECT
                         )
-                        bigtable_key = bigtable_keys.get(miner_uid)
+                        bigtable_key = stored_keys.get(miner_uid)
                         if self.bigtable_storage is not None and is_correct:
-                            # Invariant: write_predictions returns a key for
-                            # every (CORRECT, known miner_uid) pair, and
-                            # raises on any mutate failure. A CORRECT row
+                            # Invariant: every (CORRECT, known miner_uid)
+                            # pair has a key, from the workers or from
+                            # write_predictions, which raises on any mutate
+                            # failure. A CORRECT row
                             # reaching this branch without a key would mean
                             # the storage class drifted from the contract —
                             # fail loudly rather than write a sentinel that

@@ -562,3 +562,33 @@ def test_delete_predictions_raises_on_short_status_list():
 
     with pytest.raises(RuntimeError, match="statuses"):
         storage.delete_predictions(LOW_TIME_LENGTH, ["k1", "k2"])
+
+
+def test_row_key_matches_build_row_key():
+    storage = _make_storage_with_mock_tables()
+    sim_input = _low_sim_input()
+
+    assert storage.row_key(sim_input, 100) == _expected_key_for(sim_input, 100)
+
+
+def test_write_prediction_commits_one_row_to_label_table():
+    storage = _make_storage_with_mock_tables()
+    row = storage._tables["high"].direct_row.return_value
+    row.commit.return_value = MagicMock(code=0)
+
+    storage.write_prediction(HIGH_TIME_LENGTH, "ETH#1#000100", b"blob")
+
+    storage._tables["high"].direct_row.assert_called_once_with("ETH#1#000100")
+    row.set_cell.assert_called_once_with(
+        bps.COLUMN_FAMILY, bps.COLUMN_QUALIFIER, b"blob"
+    )
+    storage._tables["low"].direct_row.assert_not_called()
+
+
+@pytest.mark.parametrize("status", [None, MagicMock(code=13, message="x")])
+def test_write_prediction_raises_unless_confirmed(status):
+    storage = _make_storage_with_mock_tables()
+    storage._tables["low"].direct_row.return_value.commit.return_value = status
+
+    with pytest.raises(RuntimeError):
+        storage.write_prediction(LOW_TIME_LENGTH, "BTC#1#000100", b"blob")

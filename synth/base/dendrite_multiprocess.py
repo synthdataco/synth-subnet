@@ -18,8 +18,12 @@ import uvloop
 from synth.base.dendrite import process_error_message
 from synth.protocol import Simulation
 from synth.simulation_input import SimulationInput
-from synth.validator.bigtable_prediction_storage import encode_paths
+from synth.validator.bigtable_prediction_storage import (
+    BigtablePredictionStorage,
+    encode_paths,
+)
 from synth.validator.response_validation_v2 import (
+    CORRECT,
     validate_responses_with_paths,
 )
 
@@ -260,6 +264,40 @@ def validate_output(
     return [simulation_output, format_validation, process_time]
 
 
+# One per worker process. gRPC is not fork-safe: this relies on the spawn
+# start method set in neurons/validator.py.
+_BIGTABLE_STORAGE = None
+
+
+def get_bigtable_storage() -> BigtablePredictionStorage:
+    global _BIGTABLE_STORAGE
+    if _BIGTABLE_STORAGE is None:
+        _BIGTABLE_STORAGE = BigtablePredictionStorage()
+    return _BIGTABLE_STORAGE
+
+
+async def store_prediction(
+    result,
+    storage: BigtablePredictionStorage | None,
+    time_length: int,
+    row_key: str | None,
+) -> list:
+    """Await a `call` result and write its CORRECT blob to Bigtable under
+    `row_key`. Return `[output, format_validation, process_time,
+    bigtable_key]`; the blob stays as output when it was not written."""
+    output, format_validation, process_time = await result
+    if storage is None or row_key is None or format_validation != CORRECT:
+        return [output, format_validation, process_time, None]
+    try:
+        await asyncio.to_thread(
+            storage.write_prediction, time_length, row_key, output
+        )
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        return [output, format_validation, process_time, None]
+    return [None, format_validation, process_time, row_key]
+
+
 async def worker(
     ss58_address: str,
     nonce: int,
@@ -267,11 +305,16 @@ async def worker(
     external_ip: str,
     synapse_headers: dict,
     synapse_body: dict,
-    axon_sig_pairs: list,
+    axon_requests: list,
     timeout: float,
     float32_output: bool,
 ):
     simulation_input = SimulationInput(**synapse_body["simulation_input"])
+    storage = (
+        get_bigtable_storage()
+        if any(row_key for _, _, row_key in axon_requests)
+        else None
+    )
     async with httpx.AsyncClient(
         http2=True,
         limits=httpx.Limits(
@@ -281,23 +324,28 @@ async def worker(
     ) as client:
         return await asyncio.gather(
             *(
-                call(
-                    ss58_address=ss58_address,
-                    nonce=nonce,
-                    signature=signature,
-                    uuid=uuid,
-                    external_ip=external_ip,
-                    client=client,
-                    target_axon=bt.AxonInfo.from_parameter_dict(
-                        axon_dict,
+                store_prediction(
+                    call(
+                        ss58_address=ss58_address,
+                        nonce=nonce,
+                        signature=signature,
+                        uuid=uuid,
+                        external_ip=external_ip,
+                        client=client,
+                        target_axon=bt.AxonInfo.from_parameter_dict(
+                            axon_dict,
+                        ),
+                        synapse_headers=synapse_headers,
+                        synapse_body=synapse_body,
+                        timeout=timeout,
+                        simulation_input=simulation_input,
+                        float32_output=float32_output,
                     ),
-                    synapse_headers=synapse_headers,
-                    synapse_body=synapse_body,
-                    timeout=timeout,
-                    simulation_input=simulation_input,
-                    float32_output=float32_output,
+                    storage,
+                    simulation_input.time_length,
+                    row_key,
                 )
-                for axon_dict, signature in axon_sig_pairs
+                for axon_dict, signature, row_key in axon_requests
             )
         )
 
@@ -309,7 +357,7 @@ def run_chunk(
     external_ip: str,
     synapse_headers: dict,
     synapse_body: dict,
-    axon_sig_pairs: list,
+    axon_requests: list,
     timeout: float,
     float32_output: bool,
 ):
@@ -322,7 +370,7 @@ def run_chunk(
                 external_ip,
                 synapse_headers,
                 synapse_body,
-                axon_sig_pairs,
+                axon_requests,
                 timeout,
                 float32_output,
             )
@@ -389,9 +437,12 @@ def sync_forward_multiprocess(
     timeout: float,
     nprocs: int = 2,
     float32_output: bool = False,
+    bigtable_row_keys: list | None = None,
 ) -> list[list]:
-    """Query and validate every axon; return `validate_output` results in
-    the same order as `axons`."""
+    """Query and validate every axon; return `store_prediction` results in
+    the same order as `axons`. CORRECT predictions are written to Bigtable
+    by the workers under `bigtable_row_keys` (aligned with `axons`, requires
+    `float32_output`)."""
     global _PROCESS_EXECUTOR
     bt.logging.debug(
         f"Starting multiprocess forward with {nprocs} processes.", "dendrite"
@@ -403,8 +454,9 @@ def sync_forward_multiprocess(
     signatures = list(
         sign_axons(keypair, nonce, uuid, external_ip, axons, synapse, timeout)
     )
-    axon_sig_pairs = list(zip(axon_dicts, signatures))
-    chunks = list(chunkify(axon_sig_pairs, nprocs))
+    row_keys = bigtable_row_keys or [None] * len(axons)
+    axon_requests = list(zip(axon_dicts, signatures, row_keys))
+    chunks = list(chunkify(axon_requests, nprocs))
     synapse_headers = synapse.to_headers()
     synapse_body = synapse.model_dump()
 
