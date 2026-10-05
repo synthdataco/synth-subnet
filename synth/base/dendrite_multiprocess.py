@@ -5,7 +5,7 @@ import time
 from typing import Union
 import asyncio
 import concurrent.futures
-from itertools import repeat
+from concurrent.futures.process import BrokenProcessPool
 
 
 import bittensor as bt
@@ -320,6 +320,19 @@ def sign_axons(
         yield sign(synapse, keypair)
 
 
+# Reused across cycles; a broken pool is dropped so the next cycle forks a new one.
+_PROCESS_EXECUTOR = None
+
+
+def get_process_executor(
+    nprocs: int,
+) -> concurrent.futures.ProcessPoolExecutor:
+    global _PROCESS_EXECUTOR
+    if _PROCESS_EXECUTOR is None:
+        _PROCESS_EXECUTOR = concurrent.futures.ProcessPoolExecutor(nprocs)
+    return _PROCESS_EXECUTOR
+
+
 def sync_forward_multiprocess(
     keypair: bt.Keypair,
     uuid: str,
@@ -328,7 +341,10 @@ def sync_forward_multiprocess(
     synapse: Simulation,
     timeout: float,
     nprocs: int = 2,
-) -> list[Simulation]:
+) -> list[list]:
+    """Query every axon and return `[simulation_output, process_time]`
+    pairs in the same order as `axons`."""
+    global _PROCESS_EXECUTOR
     bt.logging.debug(
         f"Starting multiprocess forward with {nprocs} processes.", "dendrite"
     )
@@ -341,30 +357,38 @@ def sync_forward_multiprocess(
     )
     axon_sig_pairs = list(zip(axon_dicts, signatures))
     chunks = list(chunkify(axon_sig_pairs, nprocs))
-    results = []
+    synapse_headers = synapse.to_headers()
+    synapse_body = synapse.model_dump()
 
-    with concurrent.futures.ProcessPoolExecutor(nprocs) as executor:
-        intermediate_results = executor.map(
-            run_chunk,
-            repeat(ss58_address),
-            repeat(nonce),
-            repeat(uuid),
-            repeat(external_ip),
-            repeat(synapse.to_headers()),
-            repeat(synapse.model_dump()),
-            chunks,
-            repeat(timeout),
-        )
-        for chunk_results in intermediate_results:
-            for simulation_output, process_time in chunk_results:
-                synapse_result = Simulation(
-                    simulation_input=SimulationInput()
-                ).from_headers(synapse.to_headers())
-                synapse_result.simulation_output = simulation_output
-                synapse_result.dendrite.process_time = process_time
-                results.append(synapse_result.model_copy())
+    executor = get_process_executor(nprocs)
+    futures: dict = {}
+    chunk_results: list = [None] * len(chunks)
+    try:
+        for chunk_index, chunk in enumerate(chunks):
+            future = executor.submit(
+                run_chunk,
+                ss58_address,
+                nonce,
+                uuid,
+                external_ip,
+                synapse_headers,
+                synapse_body,
+                chunk,
+                timeout,
+            )
+            futures[future] = chunk_index
+        for future in concurrent.futures.as_completed(futures):
+            chunk_results[futures[future]] = future.result()
+    except BrokenProcessPool:
+        _PROCESS_EXECUTOR = None
+        raise
+    finally:
+        # No chunk may outlive this call in the shared pool.
+        for future in futures:
+            future.cancel()
+        concurrent.futures.wait(futures)
 
-    return results
+    return [result for chunk in chunk_results for result in chunk]
 
 
 # Set the event loop policy to use uvloop for better performance

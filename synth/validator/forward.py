@@ -241,7 +241,7 @@ def query_available_miners_and_save_responses(
     #     timeout=timeout,
     # )
 
-    synapses = sync_forward_multiprocess(
+    responses = sync_forward_multiprocess(
         base_neuron.dendrite.keypair,
         base_neuron.dendrite.uuid,
         base_neuron.dendrite.external_ip,
@@ -258,9 +258,7 @@ def query_available_miners_and_save_responses(
     )
 
     miner_predictions = {}
-    for i, synapse in enumerate(synapses):
-        response = synapse.deserialize()
-        process_time = synapse.dendrite.process_time
+    for i, (response, process_time) in enumerate(responses):
         try:
             format_validation = validate_responses_v2(
                 response, simulation_input, process_time
