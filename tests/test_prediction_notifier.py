@@ -42,14 +42,10 @@ def _run_forward(monkeypatch, save_return):
     Returns (saved_calls, notifier). The dendrite forward and response
     validation are stubbed; save_responses returns `save_return`.
     """
-    fake_synapse = SimpleNamespace(
-        deserialize=lambda: {"prediction": []},
-        dendrite=SimpleNamespace(process_time="1.0"),
-    )
     monkeypatch.setattr(
         forward_module,
         "sync_forward_multiprocess",
-        lambda *args, **kwargs: [fake_synapse],
+        lambda *args, **kwargs: [[{"prediction": []}, "1.0"]],
     )
     monkeypatch.setattr(
         forward_module, "validate_responses_v2", lambda *args: "CORRECT"
