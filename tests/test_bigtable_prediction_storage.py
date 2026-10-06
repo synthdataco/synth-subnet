@@ -110,6 +110,8 @@ def test_paths_round_trip():
         [[65432, 65433, 12], [1, 2, 99999]],  # int matrix
         [[65432, 65433.5, 12], [1.5, 2, 99999.99]],  # mixed
         [[0, 1, 1.0], [0.0, 2, 3]],  # points rechecked by the scalar rule
+        # int64 -> float32 would round these differently from the wire values
+        [[15728639999999999, 1, 2], [18874368000000001, 3, 4]],
     ],
 )
 def test_encode_paths_from_validation_matches_wire_lists(paths):

@@ -378,7 +378,9 @@ def encode_paths(paths) -> bytes:
     header; the header is reconstructed from validator_requests metadata on
     read.
     """
-    return np.asarray(paths, dtype=np.float32).tobytes()
+    # Through float64: int64 -> float32 rounds integers above 2**53
+    # differently from the wire values.
+    return np.asarray(paths, dtype=np.float64).astype(np.float32).tobytes()
 
 
 def _float32_bytes_to_paths(
