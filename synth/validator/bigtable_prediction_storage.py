@@ -109,6 +109,29 @@ class BigtablePredictionStorage:
         """
         return f"{asset}#{start_time_unix}#{miner_id:0{_MINER_ID_PAD}d}"
 
+    def row_key(self, simulation_input: SimulationInput, miner_id: int) -> str:
+        """Row key of one miner's prediction for this request."""
+        return self.build_row_key(
+            simulation_input.asset,
+            _start_time_to_unix(simulation_input.start_time),
+            miner_id,
+        )
+
+    def write_prediction(self, time_length: int, key: str, blob: bytes):
+        """Write one `encode_paths` blob; raises unless the server confirms
+        the row."""
+        prompt_label = prompt_config.label_from_time_length(time_length)
+        row = self._table_for_label(prompt_label).direct_row(key)
+        row.set_cell(COLUMN_FAMILY, COLUMN_QUALIFIER, blob)
+        status = row.commit()
+        code = getattr(status, "code", None)
+        if code != 0:
+            message = getattr(status, "message", "no status returned")
+            raise RuntimeError(
+                f"bigtable write failed for key={key} "
+                f"code={code} message={message}"
+            )
+
     def write_predictions(
         self,
         simulation_input: SimulationInput,
@@ -130,7 +153,6 @@ class BigtablePredictionStorage:
             simulation_input.time_length
         )
         table = self._table_for_label(prompt_label)
-        start_time_unix = _start_time_to_unix(simulation_input.start_time)
 
         rows = []
         row_sizes = []
@@ -149,11 +171,7 @@ class BigtablePredictionStorage:
                 )
                 continue
 
-            miner_id = miner_id_map[miner_uid]
-            key = self.build_row_key(
-                simulation_input.asset, start_time_unix, miner_id
-            )
-
+            key = self.row_key(simulation_input, miner_id_map[miner_uid])
             row = table.direct_row(key)
             row.set_cell(COLUMN_FAMILY, COLUMN_QUALIFIER, blob)
             rows.append(row)

@@ -1239,6 +1239,74 @@ def test_save_responses_with_bigtable_stores_sentinel_and_key(
     assert row.bigtable_key == expected_key
 
 
+def test_save_responses_with_bigtable_skips_rows_written_by_workers(
+    db_engine: Engine,
+):
+    with db_engine.connect() as connection:
+        with connection.begin():
+            connection.execute(
+                insert(Miner).values([{"miner_uid": 10}, {"miner_uid": 11}])
+            )
+
+    simulation_input = SimulationInput(
+        asset="BTC",
+        start_time="2026-05-25T12:00:00",
+        time_increment=300,
+        time_length=86400,
+        num_simulations=1,
+    )
+    miner_predictions = {
+        10: (None, response_validation_v2.CORRECT, "1.2"),
+        11: (b"blob", response_validation_v2.CORRECT, "1.3"),
+    }
+
+    class FakeBigtable:
+        def __init__(self):
+            self.written_uids = []
+
+        def write_predictions(
+            self,
+            simulation_input,
+            miner_predictions,
+            miner_id_map,
+        ):
+            self.written_uids.extend(miner_predictions)
+            return {11: "main-key-11"}
+
+    fake = FakeBigtable()
+    handler = MinerDataHandler(db_engine, bigtable_storage=fake)
+    handler.save_responses(
+        miner_predictions,
+        simulation_input,
+        datetime.now(),
+        {10: "worker-key-10"},
+    )
+
+    assert fake.written_uids == [11]
+    with db_engine.connect() as connection:
+        rows = connection.execute(
+            select(MinerPrediction.miner_uid, MinerPrediction.bigtable_key)
+        ).all()
+    assert dict(rows) == {10: "worker-key-10", 11: "main-key-11"}
+
+
+def test_bigtable_row_keys_maps_known_miner_uids(db_engine: Engine):
+    with db_engine.connect() as connection:
+        with connection.begin():
+            miner_id = connection.execute(
+                insert(Miner).values({"miner_uid": 12}).returning(Miner.id)
+            ).scalar_one()
+
+    class FakeBigtable:
+        def row_key(self, simulation_input, miner_id):
+            return f"{simulation_input.asset}#{miner_id}"
+
+    handler = MinerDataHandler(db_engine, bigtable_storage=FakeBigtable())
+    keys = handler.bigtable_row_keys(SimulationInput(asset="ETH"), [12, 99999])
+
+    assert keys == [f"ETH#{miner_id}", None]
+
+
 def test_get_predictions_by_request_hydrates_from_bigtable(
     db_engine: Engine,
 ):

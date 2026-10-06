@@ -1,3 +1,4 @@
+import asyncio
 import json
 import threading
 import time
@@ -5,6 +6,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import bittensor as bt
 import pytest
@@ -47,10 +49,10 @@ def test_results_keep_axon_order_when_chunks_finish_out_of_order(
     monkeypatch, stub_signing
 ):
     def fake_run_chunk(*args):
-        axon_sig_pairs = args[6]
+        axon_requests = args[6]
         # Earlier chunks finish last.
-        time.sleep(0.05 * (10 - axon_sig_pairs[0][0]["uid"]) / 10)
-        return [[[axon["uid"]], "0.1"] for axon, _ in axon_sig_pairs]
+        time.sleep(0.05 * (10 - axon_requests[0][0]["uid"]) / 10)
+        return [[[axon["uid"]], "0.1"] for axon, _, _ in axon_requests]
 
     monkeypatch.setattr(dendrite_multiprocess, "run_chunk", fake_run_chunk)
     with ThreadPoolExecutor(4) as executor:
@@ -173,6 +175,109 @@ def test_validate_output_survives_validation_crash(monkeypatch):
     assert result == [None, "error during validation", "1.0"]
 
 
+async def _result(*values):
+    return list(values)
+
+
+@pytest.fixture
+def worker_storage(monkeypatch):
+    """Stand-in for the worker's Bigtable client."""
+    storage = MagicMock()
+    monkeypatch.setattr(
+        dendrite_multiprocess, "get_bigtable_storage", lambda: storage
+    )
+    return storage
+
+
+def test_store_prediction_writes_correct_blob_and_returns_key(
+    worker_storage,
+):
+    result = asyncio.run(
+        dendrite_multiprocess.store_prediction(
+            _result(b"blob", CORRECT, "1.0"), 3600, "key"
+        )
+    )
+
+    worker_storage.write_prediction.assert_called_once_with(
+        3600, "key", b"blob"
+    )
+    assert result == [None, CORRECT, "1.0", "key"]
+
+
+def test_store_prediction_keeps_blob_when_write_fails(worker_storage):
+    worker_storage.write_prediction.side_effect = RuntimeError("boom")
+
+    result = asyncio.run(
+        dendrite_multiprocess.store_prediction(
+            _result(b"blob", CORRECT, "1.0"), 3600, "key"
+        )
+    )
+
+    assert result == [b"blob", CORRECT, "1.0", None]
+
+
+def test_store_prediction_keeps_blob_when_client_setup_fails(monkeypatch):
+    def failing_setup():
+        raise RuntimeError("bigtable probe failed")
+
+    monkeypatch.setattr(dendrite_multiprocess, "_BIGTABLE_STORAGE", None)
+    monkeypatch.setattr(
+        dendrite_multiprocess, "BigtablePredictionStorage", failing_setup
+    )
+
+    result = asyncio.run(
+        dendrite_multiprocess.store_prediction(
+            _result(b"blob", CORRECT, "1.0"), 3600, "key"
+        )
+    )
+
+    assert result == [b"blob", CORRECT, "1.0", None]
+    assert dendrite_multiprocess._BIGTABLE_STORAGE is None
+
+
+@pytest.mark.parametrize(
+    "format_validation, row_key",
+    [("Response is empty", "key"), (CORRECT, None)],
+)
+def test_store_prediction_skips_write(
+    worker_storage, format_validation, row_key
+):
+    result = asyncio.run(
+        dendrite_multiprocess.store_prediction(
+            _result(b"blob", format_validation, "1.0"), 3600, row_key
+        )
+    )
+
+    worker_storage.write_prediction.assert_not_called()
+    assert result == [b"blob", format_validation, "1.0", None]
+
+
+def test_row_keys_reach_workers_aligned_with_axons(monkeypatch, stub_signing):
+    def fake_run_chunk(*args):
+        return [[None, CORRECT, "0.1", row_key] for _, _, row_key in args[6]]
+
+    monkeypatch.setattr(dendrite_multiprocess, "run_chunk", fake_run_chunk)
+    with ThreadPoolExecutor(3) as executor:
+        monkeypatch.setattr(
+            dendrite_multiprocess,
+            "get_process_executor",
+            lambda nprocs: executor,
+        )
+        results = dendrite_multiprocess.sync_forward_multiprocess(
+            keypair=SimpleNamespace(ss58_address="ss58"),
+            uuid="uuid",
+            external_ip="1.2.3.4",
+            axons=[_fake_axon(uid) for uid in range(5)],
+            synapse=Simulation(simulation_input=SimulationInput()),
+            timeout=1.0,
+            nprocs=3,
+            float32_output=True,
+            bigtable_row_keys=["k0", None, "k2", "k3", None],
+        )
+
+    assert [result[3] for result in results] == ["k0", None, "k2", "k3", None]
+
+
 def _serve_miner(simulation_output):
     """Start a local HTTP miner answering every query with
     `simulation_output`; return the server."""
@@ -240,7 +345,13 @@ def test_real_pool_validates_and_encodes_in_workers(real_pool, float32_output):
         for server in servers:
             server.shutdown()
 
-    (correct, correct_fv, correct_pt), (invalid, invalid_fv, _) = results
+    (correct, correct_fv, correct_pt, correct_key), (
+        invalid,
+        invalid_fv,
+        _,
+        _,
+    ) = results
+    assert correct_key is None
     assert correct_fv == CORRECT
     assert correct_pt is not None
     assert invalid_fv == validate_responses(invalid_output, _SIM_INPUT, "1")

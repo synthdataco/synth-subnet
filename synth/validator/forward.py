@@ -210,6 +210,12 @@ def query_available_miners_and_save_responses(
     request_time: datetime,
     prediction_notifier: PredictionNotifier | None = None,
 ):
+    bigtable_row_keys = None
+    if miner_data_handler.bigtable_storage is not None:
+        bigtable_row_keys = miner_data_handler.bigtable_row_keys(
+            simulation_input, miner_uids
+        )
+
     timeout = timeout_from_start_time(simulation_input.start_time)
 
     # synapse - is a message that validator sends to miner to get results, i.e. simulation_input in our case
@@ -246,6 +252,7 @@ def query_available_miners_and_save_responses(
         timeout,
         base_neuron.config.neuron.nprocs,
         float32_output=miner_data_handler.bigtable_storage is not None,
+        bigtable_row_keys=bigtable_row_keys,
     )
 
     total_process_time = str(time.time() - start_time)
@@ -254,16 +261,25 @@ def query_available_miners_and_save_responses(
         "base_neuron.dendrite.forward",
     )
 
-    miner_predictions = {
-        miner_uid: tuple(result)
-        for miner_uid, result in zip(miner_uids, responses)
-    }
+    miner_predictions = {}
+    bigtable_keys = {}
+    for miner_uid, (output, format_validation, process_time, key) in zip(
+        miner_uids, responses
+    ):
+        miner_predictions[miner_uid] = (
+            output,
+            format_validation,
+            process_time,
+        )
+        if key is not None:
+            bigtable_keys[miner_uid] = key
 
     if len(miner_predictions) > 0:
         validator_requests_id = miner_data_handler.save_responses(
             miner_predictions,
             simulation_input,
             request_time,
+            bigtable_keys,
         )
         if (
             validator_requests_id is not None
