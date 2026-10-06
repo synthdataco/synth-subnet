@@ -39,18 +39,13 @@ def test_publish_stored_never_raises():
 def _run_forward(monkeypatch, save_return):
     """Drive query_available_miners_and_save_responses with one stubbed miner.
 
-    Returns (saved_calls, notifier). The dendrite forward and response
-    validation are stubbed; save_responses returns `save_return`.
+    Returns (saved_calls, notifier). The dendrite forward (including
+    response validation) is stubbed; save_responses returns `save_return`.
     """
     monkeypatch.setattr(
         forward_module,
         "sync_forward_multiprocess",
-        lambda *args, **kwargs: [[{"prediction": []}, "1.0"]],
-    )
-    monkeypatch.setattr(
-        forward_module,
-        "validate_responses_with_paths",
-        lambda *args: ("CORRECT", [[1.0]]),
+        lambda *args, **kwargs: [[{"prediction": []}, "CORRECT", "1.0"]],
     )
 
     saved_calls = []
