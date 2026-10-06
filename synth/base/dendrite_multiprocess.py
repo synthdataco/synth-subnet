@@ -208,9 +208,15 @@ async def call(
             timeout=timeout,
         )
         response.raise_for_status()
-        json_response = response.json()
-        process_server_response(
-            response.status_code, response.headers, json_response, synapse
+        # CPU-bound work runs off the event loop so sibling requests keep
+        # progressing toward their deadline.
+        json_response = await asyncio.to_thread(response.json)
+        await asyncio.to_thread(
+            process_server_response,
+            response.status_code,
+            response.headers,
+            json_response,
+            synapse,
         )
 
         synapse.dendrite.process_time = str(time.time() - start_time)
@@ -223,7 +229,8 @@ async def call(
             f"dendrite | <-- | {synapse.get_total_size()} B | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | {synapse.dendrite.status_code} | {synapse.dendrite.status_message}"
         )
 
-        return validate_output(
+        return await asyncio.to_thread(
+            validate_output,
             synapse.simulation_output,
             simulation_input,
             synapse.dendrite.process_time,
