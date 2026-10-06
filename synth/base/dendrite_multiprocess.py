@@ -192,7 +192,7 @@ async def call(
 
     try:
         bt.logging.trace(
-            f"dendrite | --> | {synapse.get_total_size()} B | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | 0 | Success"
+            f"dendrite | --> | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | 0 | Success"
         )
         # Enforce a total per-miner wall-clock timeout. httpx's `timeout` on
         # the AsyncClient is per-operation (connect/read/write/pool) and its
@@ -226,7 +226,7 @@ async def call(
 
     finally:
         bt.logging.trace(
-            f"dendrite | <-- | {synapse.get_total_size()} B | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | {synapse.dendrite.status_code} | {synapse.dendrite.status_message}"
+            f"dendrite | <-- | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | {synapse.dendrite.status_code} | {synapse.dendrite.status_message}"
         )
 
         return await asyncio.to_thread(
