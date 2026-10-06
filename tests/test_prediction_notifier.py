@@ -48,12 +48,16 @@ def _run_forward(monkeypatch, save_return):
         lambda *args, **kwargs: [[{"prediction": []}, "1.0"]],
     )
     monkeypatch.setattr(
-        forward_module, "validate_responses_v2", lambda *args: "CORRECT"
+        forward_module,
+        "validate_responses_with_paths",
+        lambda *args: ("CORRECT", [[1.0]]),
     )
 
     saved_calls = []
 
     class StubHandler:
+        bigtable_storage = None
+
         def save_responses(
             self, miner_predictions, simulation_input, request_time
         ):

@@ -36,6 +36,12 @@ def _make_production_prediction(num_simulations: int, num_timesteps: int):
     return [1700000000, 300, *paths.tolist()]
 
 
+def _make_blob(num_simulations: int, num_timesteps: int) -> bytes:
+    """Paths encoded the way write_predictions receives them."""
+    prediction = _make_production_prediction(num_simulations, num_timesteps)
+    return bps.encode_paths(prediction[2:])
+
+
 def _make_storage_with_mock_tables():
     """Bypass __init__ so we don't need real env vars."""
     storage = bps.BigtablePredictionStorage.__new__(
@@ -87,7 +93,7 @@ def test_paths_round_trip():
     prediction = _make_production_prediction(
         num_simulations=4, num_timesteps=7
     )
-    blob = bps._paths_to_float32_bytes(prediction)
+    blob = bps.encode_paths(prediction[2:])
 
     paths = bps._float32_bytes_to_paths(
         blob, num_simulations=4, num_timesteps=7
@@ -95,6 +101,55 @@ def test_paths_round_trip():
 
     expected = np.asarray(prediction[2:], dtype=np.float32).tolist()
     assert paths == expected
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        [[65432.17, 65433.5, 0.12345678], [1.5, 2.25, 99999.99]],  # float
+        [[65432, 65433, 12], [1, 2, 99999]],  # int matrix
+        [[65432, 65433.5, 12], [1.5, 2, 99999.99]],  # mixed
+        [[0, 1, 1.0], [0.0, 2, 3]],  # points rechecked by the scalar rule
+        # int64 -> float32 would round these differently from the wire values
+        [[15728639999999999, 1, 2], [18874368000000001, 3, 4]],
+    ],
+)
+def test_encode_paths_from_validation_matches_wire_lists(paths):
+    sim_input = SimulationInput(
+        start_time="2026-05-25T12:00:00+00:00",
+        time_increment=1,
+        time_length=2,
+        num_simulations=2,
+    )
+    response = [int(1779710400), 1, *paths]
+
+    format_validation, validated = (
+        response_validation_v2.validate_responses_with_paths(
+            response, sim_input, "1.0"
+        )
+    )
+
+    assert format_validation == CORRECT
+    assert bps.encode_paths(validated) == bps.encode_paths(paths)
+
+
+def test_validate_responses_with_paths_returns_no_paths_when_invalid():
+    sim_input = SimulationInput(
+        start_time="2026-05-25T12:00:00+00:00",
+        time_increment=1,
+        time_length=2,
+        num_simulations=1,
+    )
+    response = [1779710400, 1, [1.123456789, 2.0, 3.0]]
+
+    format_validation, validated = (
+        response_validation_v2.validate_responses_with_paths(
+            response, sim_input, "1.0"
+        )
+    )
+
+    assert format_validation != CORRECT
+    assert validated is None
 
 
 def _low_sim_input():
@@ -149,8 +204,8 @@ def test_write_predictions_skips_invalid_format_and_unknown_miners():
     ok.code = 0
     storage._tables["low"].mutate_rows.return_value = [ok]
 
-    good = _make_production_prediction(2, 3)
-    bad = _make_production_prediction(2, 3)
+    good = _make_blob(2, 3)
+    bad = _make_blob(2, 3)
     sim_input = _low_sim_input()
     miner_predictions = {
         10: (good, CORRECT, "1.0"),
@@ -182,7 +237,7 @@ def test_write_predictions_routes_to_high_table():
     ok.code = 0
     storage._tables["high"].mutate_rows.return_value = [ok]
 
-    prediction = _make_production_prediction(2, 3)
+    prediction = _make_blob(2, 3)
     sim_input = _high_sim_input()
     storage.write_predictions(
         simulation_input=sim_input,
@@ -205,7 +260,7 @@ def test_write_predictions_treats_none_status_as_failure():
     storage._tables["low"].mutate_rows.return_value = [None]
 
     sim_input = _low_sim_input()
-    prediction = _make_production_prediction(2, 3)
+    prediction = _make_blob(2, 3)
     with pytest.raises(RuntimeError):
         storage.write_predictions(
             simulation_input=sim_input,
@@ -227,7 +282,7 @@ def test_write_predictions_raises_on_short_status_list():
     storage._tables["low"].mutate_rows.return_value = [ok]
 
     sim_input = _low_sim_input()
-    prediction = _make_production_prediction(2, 3)
+    prediction = _make_blob(2, 3)
     with pytest.raises(RuntimeError):
         storage.write_predictions(
             simulation_input=sim_input,
@@ -253,7 +308,7 @@ def test_write_predictions_raises_when_any_mutate_fails():
     storage._tables["low"].mutate_rows.return_value = [bad]
 
     sim_input = _low_sim_input()
-    prediction = _make_production_prediction(2, 3)
+    prediction = _make_blob(2, 3)
     with pytest.raises(RuntimeError):
         storage.write_predictions(
             simulation_input=sim_input,
@@ -280,7 +335,7 @@ def test_write_predictions_chunks_large_batches(monkeypatch):
 
     storage._tables["low"].mutate_rows.side_effect = _statuses_for
 
-    prediction = _make_production_prediction(2, 3)
+    prediction = _make_blob(2, 3)
     sim_input = _low_sim_input()
     miner_predictions = {
         uid: (prediction, CORRECT, "1.0") for uid in (10, 11, 12)
@@ -318,7 +373,7 @@ def test_read_predictions_decodes_cell_bytes():
     storage = _make_storage_with_mock_tables()
     num_sims = 2
     prediction = _make_production_prediction(num_sims, LOW_NUM_STEPS)
-    blob = bps._paths_to_float32_bytes(prediction)
+    blob = bps.encode_paths(prediction[2:])
 
     vr = _validator_request(LOW_TIME_LENGTH, LOW_TIME_INCREMENT, num_sims)
     start_unix = int(vr.start_time.timestamp())
@@ -345,7 +400,7 @@ def test_read_predictions_ignores_unwanted_keys_from_range_scan():
     storage = _make_storage_with_mock_tables()
     num_sims = 2
     prediction = _make_production_prediction(num_sims, LOW_NUM_STEPS)
-    blob = bps._paths_to_float32_bytes(prediction)
+    blob = bps.encode_paths(prediction[2:])
 
     vr = _validator_request(LOW_TIME_LENGTH, LOW_TIME_INCREMENT, num_sims)
     start_unix = int(vr.start_time.timestamp())
