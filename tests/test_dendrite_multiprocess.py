@@ -1,8 +1,12 @@
+import json
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
+import bittensor as bt
 import pytest
 
 from synth.base import dendrite_multiprocess
@@ -167,3 +171,83 @@ def test_validate_output_survives_validation_crash(monkeypatch):
     )
 
     assert result == [None, "error during validation", "1.0"]
+
+
+def _serve_miner(simulation_output):
+    """Start a local HTTP miner answering every query with
+    `simulation_output`; return the server."""
+
+    class Miner(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = json.dumps(
+                {
+                    "simulation_input": _SIM_INPUT.model_dump(),
+                    "simulation_output": simulation_output,
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Miner)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.fixture
+def real_pool(monkeypatch):
+    monkeypatch.setattr(dendrite_multiprocess, "_PROCESS_EXECUTOR", None)
+    yield
+    if dendrite_multiprocess._PROCESS_EXECUTOR is not None:
+        dendrite_multiprocess._PROCESS_EXECUTOR.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("float32_output", [False, True])
+def test_real_pool_validates_and_encodes_in_workers(real_pool, float32_output):
+    invalid_output = [1779710400, 1, [1.123456789, 2.0, 3.0], _PATHS[1]]
+    servers = [_serve_miner(_CORRECT_OUTPUT), _serve_miner(invalid_output)]
+    keypair = bt.Keypair.create_from_mnemonic(bt.Keypair.generate_mnemonic())
+    axons = [
+        bt.AxonInfo(
+            version=1,
+            ip="127.0.0.1",
+            port=server.server_address[1],
+            ip_type=4,
+            hotkey=keypair.ss58_address,
+            coldkey=keypair.ss58_address,
+        )
+        for server in servers
+    ]
+
+    try:
+        results = dendrite_multiprocess.sync_forward_multiprocess(
+            keypair,
+            "uuid",
+            "9.9.9.9",
+            axons,
+            Simulation(simulation_input=_SIM_INPUT),
+            timeout=10.0,
+            nprocs=2,
+            float32_output=float32_output,
+        )
+    finally:
+        for server in servers:
+            server.shutdown()
+
+    (correct, correct_fv, correct_pt), (invalid, invalid_fv, _) = results
+    assert correct_fv == CORRECT
+    assert correct_pt is not None
+    assert invalid_fv == validate_responses(invalid_output, _SIM_INPUT, "1")
+    if float32_output:
+        assert correct == encode_paths(_PATHS)
+        assert invalid is None
+    else:
+        # pydantic parses the outer list as a tuple
+        assert list(correct) == _CORRECT_OUTPUT
+        assert list(invalid) == invalid_output
