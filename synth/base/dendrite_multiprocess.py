@@ -264,34 +264,38 @@ def validate_output(
     return [simulation_output, format_validation, process_time]
 
 
-# One per worker process. gRPC is not fork-safe: this relies on the spawn
-# start method set in neurons/validator.py.
+# One per worker process, built on the first write. gRPC is not fork-safe:
+# this relies on the spawn start method set in neurons/validator.py.
 _BIGTABLE_STORAGE = None
+_BIGTABLE_STORAGE_LOCK = threading.Lock()
 
 
 def get_bigtable_storage() -> BigtablePredictionStorage:
     global _BIGTABLE_STORAGE
-    if _BIGTABLE_STORAGE is None:
-        _BIGTABLE_STORAGE = BigtablePredictionStorage()
+    with _BIGTABLE_STORAGE_LOCK:
+        if _BIGTABLE_STORAGE is None:
+            _BIGTABLE_STORAGE = BigtablePredictionStorage()
     return _BIGTABLE_STORAGE
+
+
+def write_prediction(time_length: int, row_key: str, blob: bytes):
+    get_bigtable_storage().write_prediction(time_length, row_key, blob)
 
 
 async def store_prediction(
     result,
-    storage: BigtablePredictionStorage | None,
     time_length: int,
     row_key: str | None,
 ) -> list:
     """Await a `call` result and write its CORRECT blob to Bigtable under
     `row_key`. Return `[output, format_validation, process_time,
-    bigtable_key]`; the blob stays as output when it was not written."""
+    bigtable_key]`; the blob stays as output when it was not written,
+    including when the Bigtable client can't be built."""
     output, format_validation, process_time = await result
-    if storage is None or row_key is None or format_validation != CORRECT:
+    if row_key is None or format_validation != CORRECT:
         return [output, format_validation, process_time, None]
     try:
-        await asyncio.to_thread(
-            storage.write_prediction, time_length, row_key, output
-        )
+        await asyncio.to_thread(write_prediction, time_length, row_key, output)
     except Exception:
         traceback.print_exc(file=sys.stderr)
         return [output, format_validation, process_time, None]
@@ -310,11 +314,6 @@ async def worker(
     float32_output: bool,
 ):
     simulation_input = SimulationInput(**synapse_body["simulation_input"])
-    storage = (
-        get_bigtable_storage()
-        if any(row_key for _, _, row_key in axon_requests)
-        else None
-    )
     async with httpx.AsyncClient(
         http2=True,
         limits=httpx.Limits(
@@ -341,7 +340,6 @@ async def worker(
                         simulation_input=simulation_input,
                         float32_output=float32_output,
                     ),
-                    storage,
                     simulation_input.time_length,
                     row_key,
                 )

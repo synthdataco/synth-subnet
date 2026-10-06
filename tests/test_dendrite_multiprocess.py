@@ -179,49 +179,76 @@ async def _result(*values):
     return list(values)
 
 
-def test_store_prediction_writes_correct_blob_and_returns_key():
+@pytest.fixture
+def worker_storage(monkeypatch):
+    """Stand-in for the worker's Bigtable client."""
     storage = MagicMock()
+    monkeypatch.setattr(
+        dendrite_multiprocess, "get_bigtable_storage", lambda: storage
+    )
+    return storage
 
+
+def test_store_prediction_writes_correct_blob_and_returns_key(
+    worker_storage,
+):
     result = asyncio.run(
         dendrite_multiprocess.store_prediction(
-            _result(b"blob", CORRECT, "1.0"), storage, 3600, "key"
+            _result(b"blob", CORRECT, "1.0"), 3600, "key"
         )
     )
 
-    storage.write_prediction.assert_called_once_with(3600, "key", b"blob")
+    worker_storage.write_prediction.assert_called_once_with(
+        3600, "key", b"blob"
+    )
     assert result == [None, CORRECT, "1.0", "key"]
 
 
-def test_store_prediction_keeps_blob_when_write_fails():
-    storage = MagicMock()
-    storage.write_prediction.side_effect = RuntimeError("boom")
+def test_store_prediction_keeps_blob_when_write_fails(worker_storage):
+    worker_storage.write_prediction.side_effect = RuntimeError("boom")
 
     result = asyncio.run(
         dendrite_multiprocess.store_prediction(
-            _result(b"blob", CORRECT, "1.0"), storage, 3600, "key"
+            _result(b"blob", CORRECT, "1.0"), 3600, "key"
         )
     )
 
     assert result == [b"blob", CORRECT, "1.0", None]
 
 
+def test_store_prediction_keeps_blob_when_client_setup_fails(monkeypatch):
+    def failing_setup():
+        raise RuntimeError("bigtable probe failed")
+
+    monkeypatch.setattr(dendrite_multiprocess, "_BIGTABLE_STORAGE", None)
+    monkeypatch.setattr(
+        dendrite_multiprocess, "BigtablePredictionStorage", failing_setup
+    )
+
+    result = asyncio.run(
+        dendrite_multiprocess.store_prediction(
+            _result(b"blob", CORRECT, "1.0"), 3600, "key"
+        )
+    )
+
+    assert result == [b"blob", CORRECT, "1.0", None]
+    assert dendrite_multiprocess._BIGTABLE_STORAGE is None
+
+
 @pytest.mark.parametrize(
     "format_validation, row_key",
     [("Response is empty", "key"), (CORRECT, None)],
 )
-def test_store_prediction_skips_write(format_validation, row_key):
-    storage = MagicMock()
-
+def test_store_prediction_skips_write(
+    worker_storage, format_validation, row_key
+):
     result = asyncio.run(
         dendrite_multiprocess.store_prediction(
-            _result(b"blob", format_validation, "1.0"),
-            storage,
-            3600,
-            row_key,
+            _result(b"blob", format_validation, "1.0"), 3600, row_key
         )
     )
 
-    storage.write_prediction.assert_not_called()
+    worker_storage.write_prediction.assert_not_called()
     assert result == [b"blob", format_validation, "1.0", None]
 
 
