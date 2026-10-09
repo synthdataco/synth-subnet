@@ -735,21 +735,6 @@ class MinerDataHandler:
                     JOIN miner_predictions mp ON mp.id = ms.miner_predictions_id
                     JOIN validator_requests vr ON vr.id = mp.validator_requests_id
                     WHERE ms.scored_time > :min_scored_time
-                      -- Redundant by construction, and load-bearing for the
-                      -- plan. A prediction is scored exactly when its window
-                      -- closes, so scored_time = vr.start_time + time_length
-                      -- always (verified: 0 violations in 3.7M rows over 14
-                      -- days). That makes this bound logically implied by the
-                      -- scored_time filter above -- it removes no rows.
-                      --
-                      -- Without it nothing constrains validator_requests in
-                      -- time, so the planner hash-joins a FULL SEQ SCAN of
-                      -- miner_predictions (165M rows / 110GB) before it can
-                      -- apply asset/time_length. With it, vr is reached by
-                      -- start_time and miner_predictions via idx_mp_vr_id:
-                      -- plan cost 5.59M -> 2.09M, runtime 110s -> 30s on a
-                      -- 10-day window. Verified identical: 491,520 rows,
-                      -- matching md5 over the whole result set.
                       AND vr.start_time >
                           :min_scored_time - (:time_length * interval '1 second')
                       AND vr.time_length = :time_length
