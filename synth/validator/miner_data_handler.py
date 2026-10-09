@@ -735,6 +735,8 @@ class MinerDataHandler:
                     JOIN miner_predictions mp ON mp.id = ms.miner_predictions_id
                     JOIN validator_requests vr ON vr.id = mp.validator_requests_id
                     WHERE ms.scored_time > :min_scored_time
+                      AND vr.start_time >
+                          :min_scored_time - (:time_length * interval '1 second')
                       AND vr.time_length = :time_length
                       AND vr.asset = ANY(:asset_list)
                 """)
