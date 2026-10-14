@@ -1798,3 +1798,40 @@ def test_set_miner_scores_persists_the_score_capped_flag(db_engine: Engine):
     if len(results) > 2:
         # omitted upstream -> stored as False, never missing and never an error
         assert results[2][0]["score_capped"] is False
+
+
+def _insert_request(
+    connection, asset: str, time_length: int, start_time: datetime
+) -> None:
+    connection.execute(
+        insert(ValidatorRequest).values(
+            start_time=start_time,
+            asset=asset,
+            time_increment=300,
+            time_length=time_length,
+            num_simulations=1,
+            request_time=start_time,
+        )
+    )
+
+
+def test_get_latest_asset_ignores_assets_outside_the_list(db_engine: Engine):
+    """A pod rotating over its own assets is not reset by requests other
+    pods sent for other assets of the same time_length."""
+    now = datetime.now()
+    time_length = LOW_TEST_CONFIG.time_length
+    with db_engine.connect() as connection:
+        with connection.begin():
+            _insert_request(
+                connection, "SP500", time_length, now - timedelta(minutes=20)
+            )
+            _insert_request(
+                connection, "BTC", time_length, now - timedelta(minutes=1)
+            )
+            _insert_request(connection, "XAU", 3600, now)
+
+    handler = MinerDataHandler(db_engine)
+
+    assert handler.get_latest_asset(time_length, ["XAU", "SP500"]) == "SP500"
+    assert handler.get_latest_asset(time_length, ["BTC", "ETH"]) == "BTC"
+    assert handler.get_latest_asset(time_length, ["NVDAX"]) is None

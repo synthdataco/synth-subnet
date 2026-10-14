@@ -155,7 +155,9 @@ class MinerDataHandler:
             for miner_uid in miner_uids
         ]
 
-    def get_latest_asset(self, time_length: int) -> str | None:
+    def get_latest_asset(
+        self, time_length: int, asset_list: list[str]
+    ) -> str | None:
         try:
             with self.engine.connect() as connection:
                 query = (
@@ -163,6 +165,7 @@ class MinerDataHandler:
                         ValidatorRequest.asset,
                     )
                     .where(ValidatorRequest.time_length == time_length)
+                    .where(ValidatorRequest.asset.in_(asset_list))
                     .limit(1)
                     .order_by(ValidatorRequest.start_time.desc())
                 )
