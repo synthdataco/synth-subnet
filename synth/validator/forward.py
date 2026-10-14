@@ -122,14 +122,17 @@ def calculate_moving_average_and_update_rewards(
     # VHFT: a 4th competition scored OFF-subnet. Pulled from the external scorer and
     # run through the SAME shape+blend tail as the others. Off (skipped) unless
     # VHFT_SCORES_URL is set (vhft_provider is None), so this is inert until enabled.
+    # Each rewarded VHFT asset is its own competition with an equal share of the
+    # block; an asset skipped this cycle simply goes unpaid until the next.
     if vhft_provider is not None:
-        vhft_scores = vhft_provider.fetch_scores()
-        if vhft_scores:
+        share = 1.0 / len(vhft_provider.assets)
+        for asset in vhft_provider.assets:
+            comp = competition_config.vhft_competition(asset)
+            vhft_scores = vhft_provider.fetch_scores(asset)
+            if not vhft_scores:
+                continue
             vhft_ma = compute_vhft_smoothed_score(
-                miner_data_handler,
-                vhft_scores,
-                scored_time,
-                competition_config.VHFT_COMPETITION,
+                miner_data_handler, vhft_scores, scored_time, comp, share
             )
             if vhft_ma:
                 # Same per-competition log the inline three emit, so VHFT is
@@ -137,13 +140,9 @@ def calculate_moving_average_and_update_rewards(
                 # visible in miner_rewards, which is awkward to reach on
                 # mainnet. Inside the guard, unlike the loop above: vhft_ma is
                 # Optional and print_rewards_df would raise on None.
-                print_rewards_df(
-                    vhft_ma, competition_config.VHFT_COMPETITION.label
-                )
+                print_rewards_df(vhft_ma, comp.label)
                 miner_data_handler.update_miner_rewards(vhft_ma)
-                moving_averages_data[
-                    competition_config.VHFT_COMPETITION.label
-                ] = vhft_ma
+                moving_averages_data[comp.label] = vhft_ma
 
     return combine_moving_averages(moving_averages_data)
 

@@ -17,7 +17,20 @@ import typing
 import bittensor as bt
 import requests
 
+from synth.validator.competition_config import VHFT_ASSETS
+
 _DEFAULT_TIMEOUT_S = 10
+
+
+def _parse_assets(spec: str) -> list[str]:
+    """VHFT_REWARDED_ASSETS, e.g. "BTC,ETH"; empty means BTC alone."""
+    assets = [a.strip().upper() for a in spec.split(",") if a.strip()]
+    unknown = [a for a in assets if a not in VHFT_ASSETS]
+    if unknown:
+        raise ValueError(
+            f"VHFT_REWARDED_ASSETS: unknown {unknown}; known {VHFT_ASSETS}"
+        )
+    return assets or ["BTC"]
 
 
 def _parse_score_row(row: typing.Any) -> typing.Optional[tuple[int, float]]:
@@ -50,20 +63,60 @@ def _parse_score_row(row: typing.Any) -> typing.Optional[tuple[int, float]]:
 
 
 class VhftScoreProvider:
-    def __init__(self, url: str):
+    def __init__(self, url: str, assets: typing.Optional[list[str]] = None):
         self._url = url
-        bt.logging.info(f"VHFT score provider enabled (url: {self._url})")
+        # The VHFT assets paid as competitions, each an equal share of the block.
+        self.assets = assets or ["BTC"]
+        bt.logging.info(
+            f"VHFT score provider enabled (url: {self._url}, "
+            f"assets: {', '.join(self.assets)})"
+        )
 
     @staticmethod
     def from_env() -> typing.Optional["VhftScoreProvider"]:
-        """Build from VHFT_SCORES_URL; returns None (disabled) when unset."""
+        """Build from VHFT_SCORES_URL and VHFT_REWARDED_ASSETS; returns None
+        (disabled) when the URL is unset."""
         url = os.getenv("VHFT_SCORES_URL")
         if not url:
             return None
-        return VhftScoreProvider(url=url)
+        assets = _parse_assets(os.getenv("VHFT_REWARDED_ASSETS", ""))
+        return VhftScoreProvider(url=url, assets=assets)
 
-    def fetch_scores(self) -> typing.Optional[dict[int, float]]:
-        """Return {miner_uid: mean_crps} for VHFT participants only.
+    def _get_rows(self, asset: str) -> typing.Optional[list]:
+        """The snapshot's rows for `asset`, or None when there are none to
+        trust: the request failed, or the scorer answered for another asset."""
+        params = None if asset == "BTC" else {"asset": asset}
+        try:
+            resp = requests.get(
+                self._url, params=params, timeout=_DEFAULT_TIMEOUT_S
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            rows = body.get("scores", [])
+        except Exception as e:
+            bt.logging.warning(
+                f"VHFT {asset} fetch_scores failed (skipping it this cycle): "
+                f"{e}"
+            )
+            return None
+        if params is not None and body.get("asset") != asset:
+            bt.logging.warning(
+                f"VHFT: asked for {asset}, the scorer answered for "
+                f"{body.get('asset')!r} (an older scorer without per-asset "
+                f"scores); skipping {asset} this cycle"
+            )
+            return None
+        return rows
+
+    def fetch_scores(
+        self, asset: str = "BTC"
+    ) -> typing.Optional[dict[int, float]]:
+        """Return {miner_uid: mean_crps} for one asset's VHFT participants only.
+
+        BTC is the endpoint's default snapshot, fetched as it always was. Any
+        other asset is `?asset=<ASSET>`, and the response must say so: an older
+        scorer ignores the parameter and would answer with BTC's scores, which
+        must never be paid out as another asset's.
 
         The /v1/scores endpoint returns all 256 uids, with mean_crps=0.0 (and
         weight=0.0) for non-participants. Those are EXCLUDED here: 0.0 would read
@@ -107,14 +160,8 @@ class VhftScoreProvider:
         could be misattributed. Add hotkey to /v1/scores and validate it against the
         metagraph for robustness.
         """
-        try:
-            resp = requests.get(self._url, timeout=_DEFAULT_TIMEOUT_S)
-            resp.raise_for_status()
-            rows = resp.json().get("scores", [])
-        except Exception as e:
-            bt.logging.warning(
-                f"VHFT fetch_scores failed (skipping VHFT this cycle): {e}"
-            )
+        rows = self._get_rows(asset)
+        if rows is None:
             return None
 
         scores: dict[int, float] = {}

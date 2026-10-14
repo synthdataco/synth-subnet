@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 SMOOTHED_SCORE_COEFFICIENT = 1 / 3
 
@@ -150,6 +150,22 @@ VHFT_COMPETITION = CompetitionConfig(
     # other competitions.
     softmax_beta=-4.0,
 )
+
+# Every asset the VHFT scorer runs as its own competition, one softmax each.
+# Which of them are paid is VhftScoreProvider's `assets` (VHFT_REWARDED_ASSETS,
+# default BTC); the VHFT block is split equally among those.
+VHFT_ASSETS = ["BTC", "ETH", "SOL", "XRP"]
+
+
+def vhft_competition(asset: str) -> CompetitionConfig:
+    """The competition config for one VHFT asset. BTC is VHFT_COMPETITION itself,
+    so its label — stored as miner_rewards.prompt_name — stays "VHFT 10s"."""
+    if asset == "BTC":
+        return VHFT_COMPETITION
+    return replace(
+        VHFT_COMPETITION, asset_list=[asset], label=f"VHFT 10s {asset}"
+    )
+
 
 # Plausible size of the VHFT participant field, enforced in
 # compute_vhft_smoothed_score — outside this range the blend is skipped for the
