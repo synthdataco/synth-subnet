@@ -23,13 +23,19 @@ _DEFAULT_TIMEOUT_S = 10
 
 
 def _parse_assets(spec: str) -> list[str]:
-    """VHFT_REWARDED_ASSETS, e.g. "BTC,ETH"; empty means BTC alone."""
+    """VHFT_REWARDED_ASSETS, e.g. "BTC,ETH"; empty means BTC alone.
+
+    A repeated asset is refused: the block is split by the number of entries,
+    but both would pay under the same competition label, so one half of that
+    asset's share would silently vanish."""
     assets = [a.strip().upper() for a in spec.split(",") if a.strip()]
     unknown = [a for a in assets if a not in VHFT_ASSETS]
     if unknown:
         raise ValueError(
             f"VHFT_REWARDED_ASSETS: unknown {unknown}; known {VHFT_ASSETS}"
         )
+    if len(set(assets)) != len(assets):
+        raise ValueError(f"VHFT_REWARDED_ASSETS: repeated asset in {assets}")
     return assets or ["BTC"]
 
 

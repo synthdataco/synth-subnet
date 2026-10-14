@@ -267,3 +267,12 @@ def test_rewarded_assets_are_read_and_checked(monkeypatch):
     monkeypatch.setenv("VHFT_REWARDED_ASSETS", "BTC,DOGE")
     with pytest.raises(ValueError, match="DOGE"):
         VhftScoreProvider.from_env()
+
+
+def test_a_repeated_rewarded_asset_is_refused(monkeypatch):
+    # "BTC,btc" would halve the block per entry while both paid as "VHFT 10s",
+    # one overwriting the other: VHFT would pay 1/6 instead of 1/3.
+    monkeypatch.setenv("VHFT_SCORES_URL", "http://vhft/v1/scores")
+    monkeypatch.setenv("VHFT_REWARDED_ASSETS", "BTC,btc")
+    with pytest.raises(ValueError, match="repeated"):
+        VhftScoreProvider.from_env()
