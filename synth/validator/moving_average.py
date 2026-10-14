@@ -208,8 +208,12 @@ def compute_vhft_smoothed_score(
     vhft_scores: dict[int, float],
     scored_time: datetime,
     comp: CompetitionConfig,
+    share: float = 1.0,
 ) -> typing.Optional[list[dict]]:
     """Shape external VHFT per-uid scores into reward-weight dicts.
+
+    `share` is this asset's part of the VHFT block: 1 / the number of rewarded
+    VHFT assets, each its own competition with its own softmax.
 
     `vhft_scores` is {miner_uid: mean_crps} for VHFT participants only (already
     windowed by the external scorer), so there is NO per-window aggregation here —
@@ -269,7 +273,8 @@ def compute_vhft_smoothed_score(
                     "miner_uid": item["miner_uid"],
                     "smoothed_score": item["rolling_avg"],
                     "reward_weight": float(reward_weight)
-                    * SMOOTHED_SCORE_COEFFICIENT,
+                    * SMOOTHED_SCORE_COEFFICIENT
+                    * share,
                     "updated_at": scored_time.isoformat(),
                     "prompt_name": comp.label,
                 }
