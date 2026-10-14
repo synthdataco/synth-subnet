@@ -46,7 +46,7 @@ class SequentialScheduler:
             self.first_run,
         )
         latest_asset = self.miner_data_handler.get_latest_asset(
-            prompt_config.time_length
+            prompt_config.time_length, asset_list
         )
         asset = self.select_asset(latest_asset, asset_list)
 
