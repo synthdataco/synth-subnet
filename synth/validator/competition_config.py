@@ -188,6 +188,18 @@ def vhft_competition(asset: str) -> CompetitionConfig:
     )
 
 
+def competition_shares(vhft_assets: list[str]) -> dict[str, float]:
+    """Each competition's share of the block, by label: the inline ones, and each
+    rewarded VHFT asset's equal part of the VHFT share. Empty `vhft_assets` means
+    VHFT is not blended on this validator."""
+    shares = {c.label: SMOOTHED_SCORE_COEFFICIENT for c in ALL_COMPETITIONS}
+    for asset in vhft_assets:
+        shares[vhft_competition(asset).label] = (
+            SMOOTHED_SCORE_COEFFICIENT / len(vhft_assets)
+        )
+    return shares
+
+
 # Plausible size of the VHFT participant field, enforced in
 # compute_vhft_smoothed_score — outside this range the blend is skipped for the
 # cycle rather than trusted.

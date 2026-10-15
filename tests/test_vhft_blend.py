@@ -15,6 +15,7 @@ from synth.validator.competition_config import (
     VHFT_MAX_PARTICIPANTS,
     VHFT_ASSETS,
     VHFT_MIN_PARTICIPANTS,
+    competition_shares,
     vhft_competition,
 )
 from synth.validator.moving_average import compute_vhft_smoothed_score
@@ -191,3 +192,22 @@ def test_the_cycle_pays_each_rewarded_asset_as_its_own_competition(
     # cycle, so its quarter goes unpaid rather than to the others.
     total = sum(r["reward_weight"] for r in combined)
     assert total == pytest.approx(SMOOTHED_SCORE_COEFFICIENT * 3 / 4)
+
+
+def test_expected_shares_follow_the_rewarded_assets_not_the_ones_seen():
+    # Four rewarded, one skipped this cycle: the others still expect a quarter
+    # of the VHFT share each, not a third.
+    four = competition_shares(["BTC", "ETH", "SOL", "XRP"])
+    assert four["VHFT 10s ETH"] == pytest.approx(
+        SMOOTHED_SCORE_COEFFICIENT / 4
+    )
+    assert sum(four.values()) == pytest.approx(1.0)
+    # BTC alone (the default) gets the whole VHFT share; the others are not
+    # expected at all.
+    btc = competition_shares(["BTC"])
+    assert btc["VHFT 10s"] == pytest.approx(SMOOTHED_SCORE_COEFFICIENT)
+    assert "VHFT 10s ETH" not in btc
+    # without VHFT, only the inline competitions
+    assert not any(
+        label.startswith("VHFT") for label in competition_shares([])
+    )
