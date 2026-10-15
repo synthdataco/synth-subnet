@@ -7,7 +7,8 @@ SELECTs against the validator's Postgres, no writes.
 Verifies, against live validator data:
   - per-competition reward_weight sums for the latest scoring cycle
     (each `prompt_name` should be ~SMOOTHED_SCORE_COEFFICIENT, a VHFT
-    asset's that divided by the number of VHFT assets paid this cycle);
+    asset's that divided by the number of assets in VHFT_REWARDED_ASSETS;
+    VHFT is expected only when VHFT_SCORES_URL is set, as for the validator);
   - recent miner_scores volume per (asset, time_length) competition slice;
   - the most recent weights_update_history rows resolved SUCCESS.
 
@@ -19,6 +20,7 @@ from sqlalchemy import text
 
 from synth.validator import competition_config
 from synth.validator.miner_data_handler import MinerDataHandler
+from synth.validator.vhft_score_provider import VhftScoreProvider
 
 SCORES_LOOKBACK_HOURS = 24
 WEIGHTS_TO_SHOW = 5
@@ -27,13 +29,13 @@ WEIGHTS_TO_SHOW = 5
 def main() -> None:
     load_dotenv()
     engine = MinerDataHandler().engine
-    share = competition_config.SMOOTHED_SCORE_COEFFICIENT
-    vhft_labels = {
-        competition_config.vhft_competition(a).label
-        for a in competition_config.VHFT_ASSETS
-    }
-    labels = {c.label for c in competition_config.ALL_COMPETITIONS}
-    labels |= vhft_labels
+    # The same VHFT configuration the validator reads, so a skipped asset is
+    # still counted and an unrewarded one is not expected.
+    vhft = VhftScoreProvider.from_env()
+    shares = competition_config.competition_shares(
+        vhft.assets if vhft is not None else []
+    )
+    labels = set(shares)
 
     with engine.connect() as conn:
         # --- per-competition reward_weight sums for the latest cycle ---
@@ -58,13 +60,9 @@ def main() -> None:
                 """),
             {"latest": latest},
         ).fetchall()
-        n_vhft = sum(1 for r in rows if r.prompt_name in vhft_labels) or 1
         for r in rows:
             flag = "" if r.prompt_name in labels else "  <-- UNKNOWN LABEL"
-            expected = (
-                share / n_vhft if r.prompt_name in vhft_labels else share
-            )
-            delta = (r.total or 0) - expected
+            delta = (r.total or 0) - shares.get(r.prompt_name, 0.0)
             print(
                 f"{str(r.prompt_name):28} {r.n:>8} {r.total or 0:>16.6f} "
                 f"{delta:>+10.6f}{flag}"
