@@ -13,6 +13,7 @@ from synth.validator.competition_config import (
     SMOOTHED_SCORE_COEFFICIENT,
     VHFT_COMPETITION,
     VHFT_MAX_PARTICIPANTS,
+    VHFT_ASSETS,
     VHFT_MIN_PARTICIPANTS,
     vhft_competition,
 )
@@ -146,7 +147,15 @@ def test_btc_keeps_the_label_its_rewards_are_stored_under():
     assert VHFT_COMPETITION.label == "VHFT 10s"
     eth = vhft_competition("ETH")
     assert eth.asset_list == ["ETH"]
-    assert eth.softmax_beta == VHFT_COMPETITION.softmax_beta
+
+
+def test_each_asset_has_its_own_beta():
+    # Scores are in each asset's price units, so the cheaper the asset, the
+    # steeper its beta has to be for the same separation between miners.
+    betas = [vhft_competition(a).softmax_beta for a in VHFT_ASSETS]
+    assert betas[0] == VHFT_COMPETITION.softmax_beta
+    assert all(b < 0 for b in betas)
+    assert betas == sorted(betas, reverse=True)  # BTC, ETH, SOL, XRP: steeper
 
 
 class _Provider:

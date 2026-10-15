@@ -1,6 +1,11 @@
 from dataclasses import dataclass, replace
 
-SMOOTHED_SCORE_COEFFICIENT = 1 / 3
+# Each competition's share of the miner block: four competitions (the three
+# below and VHFT), 1:1:1:1. VHFT's share is split equally among its rewarded
+# assets. The shares sum to 1, so a stored miner_rewards.reward_weight is that
+# miner's fraction of the block from that competition; set_weights normalises
+# again, so a validator without VHFT still splits its three equally.
+SMOOTHED_SCORE_COEFFICIENT = 1 / 4
 
 # 1h score = price CRPS + VOL_CRPS_LAMBDA × the mean, over the block sizes,
 # of the mean per-block volatility CRPS — so each weight below must stay
@@ -123,9 +128,8 @@ ALL_COMPETITIONS = [
 # and blended in via the external-ingestion path (vhft_score_provider +
 # compute_vhft_smoothed_score), NOT through the inline-CRPS path — so it is
 # deliberately kept OUT of ALL_COMPETITIONS. It reuses the same
-# SMOOTHED_SCORE_COEFFICIENT and softmax as the other three, so after set_weights
-# L1-normalizes, the four competitions split emissions equally (the coefficient
-# value cancels; a *shared* coefficient is what makes the split equal).
+# SMOOTHED_SCORE_COEFFICIENT and softmax as the other three, so the four
+# competitions split emissions equally.
 VHFT_COMPETITION = CompetitionConfig(
     asset_list=["BTC"],
     label="VHFT 10s",
@@ -151,10 +155,24 @@ VHFT_COMPETITION = CompetitionConfig(
     softmax_beta=-4.0,
 )
 
-# Every asset the VHFT scorer runs as its own competition, one softmax each.
-# Which of them are paid is VhftScoreProvider's `assets` (VHFT_REWARDED_ASSETS,
-# default BTC); the VHFT block is split equally among those.
-VHFT_ASSETS = ["BTC", "ETH", "SOL", "XRP"]
+# Every asset the VHFT scorer runs as its own competition, one softmax each,
+# with its beta. Which of them are paid is VhftScoreProvider's `assets`
+# (VHFT_REWARDED_ASSETS, default BTC); the VHFT block is split equally among
+# those.
+#
+# Scores are in each asset's own price units, so one beta cannot fit all four:
+# the gaps between miners shrink with the asset's price. Each beta is BTC's
+# scaled by BTC's typical 10 s move over the asset's, which gives every asset
+# the same steepness relative to its own volatility. Starting values: set them
+# from the asset's observed score spread before it is paid. Must match the
+# external scorer's per-asset betas.
+VHFT_SOFTMAX_BETAS = {
+    "BTC": -4.0,
+    "ETH": -86.0,
+    "SOL": -1460.0,
+    "XRP": -128000.0,
+}
+VHFT_ASSETS = list(VHFT_SOFTMAX_BETAS)
 
 
 def vhft_competition(asset: str) -> CompetitionConfig:
@@ -163,7 +181,10 @@ def vhft_competition(asset: str) -> CompetitionConfig:
     if asset == "BTC":
         return VHFT_COMPETITION
     return replace(
-        VHFT_COMPETITION, asset_list=[asset], label=f"VHFT 10s {asset}"
+        VHFT_COMPETITION,
+        asset_list=[asset],
+        label=f"VHFT 10s {asset}",
+        softmax_beta=VHFT_SOFTMAX_BETAS[asset],
     )
 
 
