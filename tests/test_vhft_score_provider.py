@@ -219,3 +219,60 @@ def test_returns_none_on_http_failure():
     ):
         provider = VhftScoreProvider(url="http://vhft/v1/scores")
         assert provider.fetch_scores() is None
+
+
+def _fetch_asset(payload, asset):
+    with patch(
+        "synth.validator.vhft_score_provider.requests.get",
+        return_value=_response(payload),
+    ) as get:
+        provider = VhftScoreProvider(url="http://vhft/v1/scores")
+        return provider.fetch_scores(asset), get
+
+
+_FIELD = [
+    {"uid": 1, "weight": 0.6, "mean_crps": 0.1},
+    {"uid": 2, "weight": 0.4, "mean_crps": 0.3},
+]
+
+
+def test_btc_is_fetched_as_it_always_was():
+    scores, get = _fetch_asset({"scores": _FIELD}, "BTC")
+    assert scores == {1: 0.1, 2: 0.3}
+    assert get.call_args.kwargs["params"] is None
+
+
+def test_another_asset_is_asked_for_by_name_and_must_be_answered_for():
+    scores, get = _fetch_asset({"asset": "ETH", "scores": _FIELD}, "ETH")
+    assert scores == {1: 0.1, 2: 0.3}
+    assert get.call_args.kwargs["params"] == {"asset": "ETH"}
+
+
+def test_an_older_scorer_answering_with_btc_is_never_paid_as_another_asset():
+    # It ignores ?asset= and returns the BTC snapshot, with no "asset" key.
+    scores, _ = _fetch_asset({"scores": _FIELD}, "SOL")
+    assert scores is None
+
+
+def test_rewarded_assets_default_to_btc(monkeypatch):
+    monkeypatch.setenv("VHFT_SCORES_URL", "http://vhft/v1/scores")
+    monkeypatch.delenv("VHFT_REWARDED_ASSETS", raising=False)
+    assert VhftScoreProvider.from_env().assets == ["BTC"]
+
+
+def test_rewarded_assets_are_read_and_checked(monkeypatch):
+    monkeypatch.setenv("VHFT_SCORES_URL", "http://vhft/v1/scores")
+    monkeypatch.setenv("VHFT_REWARDED_ASSETS", "btc, eth,SOL,xrp")
+    assert VhftScoreProvider.from_env().assets == ["BTC", "ETH", "SOL", "XRP"]
+    monkeypatch.setenv("VHFT_REWARDED_ASSETS", "BTC,DOGE")
+    with pytest.raises(ValueError, match="DOGE"):
+        VhftScoreProvider.from_env()
+
+
+def test_a_repeated_rewarded_asset_is_refused(monkeypatch):
+    # "BTC,btc" would halve the block per entry while both paid as "VHFT 10s",
+    # one overwriting the other: VHFT would pay half of its share.
+    monkeypatch.setenv("VHFT_SCORES_URL", "http://vhft/v1/scores")
+    monkeypatch.setenv("VHFT_REWARDED_ASSETS", "BTC,btc")
+    with pytest.raises(ValueError, match="repeated"):
+        VhftScoreProvider.from_env()

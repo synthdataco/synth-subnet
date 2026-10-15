@@ -396,7 +396,7 @@ def _seed_competition_scores(engine, comp, miner_ids, scores, scored_time):
 def test_moving_average_writes_all_three_competitions(db_engine: Engine):
     """End-to-end (DB, no live prices): the moving-average update iterates
     ALL_COMPETITIONS, writes miner_rewards under each competition's label, and
-    the combined weights sum to ~1.0 (3 competitions x SMOOTHED_SCORE_COEFFICIENT).
+    the combined weights sum to 3 x SMOOTHED_SCORE_COEFFICIENT (no VHFT here).
     """
     handler = MinerDataHandler(db_engine)
     miner_ids = [90101, 90102]  # high ids to avoid collision with other tests
@@ -444,10 +444,12 @@ def test_moving_average_writes_all_three_competitions(db_engine: Engine):
         }
     assert labels == {c.label for c in competition_config.ALL_COMPETITIONS}
 
-    # Each competition contributes SMOOTHED_SCORE_COEFFICIENT, so the combined
-    # per-miner weights sum to ~1.0 across the three competitions.
+    # Each competition contributes SMOOTHED_SCORE_COEFFICIENT; VHFT, the
+    # fourth, is not configured here.
     total = sum(item["reward_weight"] for item in combined)
-    assert total == pytest.approx(1.0, abs=1e-6)
+    assert total == pytest.approx(
+        3 * competition_config.SMOOTHED_SCORE_COEFFICIENT, abs=1e-6
+    )
 
 
 @patch("synth.miner.simulations.get_asset_price", return_value=90000.0)
