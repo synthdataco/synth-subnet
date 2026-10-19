@@ -34,6 +34,7 @@ from synth.utils.helpers import (
 from synth.utils.logging import print_execution_time, setup_gcp_logging
 from synth.utils.sequential_scheduler import SequentialScheduler
 from synth.validator.forward import (
+    add_owner_burn,
     calculate_moving_average_and_update_rewards,
     calculate_scores,
     get_available_miners_and_update_metagraph_history,
@@ -345,6 +346,17 @@ class Validator(BaseValidatorNeuron):
         # Send rewards calculated in the previous step
         # into bittensor consensus calculation
         # ========================================== #
+
+        moving_averages_data = add_owner_burn(
+            moving_averages_data=moving_averages_data,
+            owner_uid=23 if self.config.subtensor.network == "test" else 248,
+            scored_time=scored_time,
+        )
+
+        bt.logging.info(
+            f"Moving averages data for owner: {moving_averages_data[-1]}",
+            "forward_score",
+        )
 
         send_weights_to_bittensor_and_update_weights_history(
             base_neuron=self,
