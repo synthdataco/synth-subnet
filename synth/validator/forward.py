@@ -84,6 +84,30 @@ def send_weights_to_bittensor_and_update_weights_history(
     )
 
 
+OWNER_BURN = 0.22
+
+
+def add_owner_burn(
+    moving_averages_data: list[dict],
+    owner_uid: int,
+    scored_time: datetime,
+) -> list[dict]:
+    """Gives the owner UID OWNER_BURN of this validator's weights."""
+    miners_data = [
+        r for r in moving_averages_data if r["miner_uid"] != owner_uid
+    ]
+    miners_weight = sum([r["reward_weight"] for r in miners_data])
+    return miners_data + [
+        {
+            "miner_id": 0,
+            "miner_uid": owner_uid,
+            "smoothed_score": 0,
+            "reward_weight": miners_weight * OWNER_BURN / (1 - OWNER_BURN),
+            "updated_at": scored_time.isoformat(),
+        }
+    ]
+
+
 @print_execution_time
 def calculate_moving_average_and_update_rewards(
     miner_data_handler: MinerDataHandler,

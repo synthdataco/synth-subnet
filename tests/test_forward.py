@@ -13,6 +13,7 @@ from synth.miner.simulations import generate_simulations
 from synth.simulation_input import SimulationInput
 from synth.validator import response_validation_v2
 from synth.validator.forward import (
+    add_owner_burn,
     calculate_moving_average_and_update_rewards,
     calculate_scores,
 )
@@ -555,3 +556,39 @@ def test_calculate_moving_average_and_update_rewards_only_invalid(
         )
 
         print("moving_averages_data", moving_averages_data)
+
+
+def test_add_owner_burn():
+    scored_time = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+    moving_averages_data = [
+        {"miner_uid": 1, "reward_weight": 0.25},
+        {"miner_uid": 2, "reward_weight": 0.75},
+    ]
+
+    result = add_owner_burn(moving_averages_data, 248, scored_time)
+
+    assert result[:2] == moving_averages_data
+    assert result[-1] == {
+        "miner_id": 0,
+        "miner_uid": 248,
+        "smoothed_score": 0,
+        "reward_weight": pytest.approx(0.22 / 0.78),
+        "updated_at": scored_time.isoformat(),
+    }
+    total = sum(r["reward_weight"] for r in result)
+    assert result[-1]["reward_weight"] / total == pytest.approx(0.22)
+
+
+def test_add_owner_burn_owner_scored_as_miner():
+    scored_time = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+    moving_averages_data = [
+        {"miner_uid": 1, "reward_weight": 0.5},
+        {"miner_uid": 248, "reward_weight": 0.5},
+    ]
+
+    result = add_owner_burn(moving_averages_data, 248, scored_time)
+
+    assert [r["miner_uid"] for r in result] == [1, 248]
+    assert result[-1]["reward_weight"] == pytest.approx(0.5 * 0.22 / 0.78)
+    total = sum(r["reward_weight"] for r in result)
+    assert result[-1]["reward_weight"] / total == pytest.approx(0.22)
