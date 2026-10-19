@@ -352,6 +352,7 @@ class Validator(BaseValidatorNeuron):
             owner_uid=23 if self.config.subtensor.network == "test" else 248,
             scored_time=scored_time,
         )
+        self.scores.fill(0)
 
         bt.logging.info(
             f"Moving averages data for owner: {moving_averages_data[-1]}",
