@@ -1,18 +1,41 @@
 # Changelog
 
-## Unreleased · Crypto 1h volatility scoring
+## 2026-10-19 · Emission burn at 22%, Synth Ultra adds ETH, SOL and XRP
 
-- **The Crypto 1h score now includes a volatility term.** On top of the CRPS on price changes, the 1h prompt score also scores realized volatility: the hour is cut into consecutive blocks of three sizes — one 60-minute, four 15-minute and twelve 5-minute — and for every block the standard deviation of the 1-minute price changes in basis points is CRPS-scored against the realized one. Writing `S60`, `S15` and `S5` for the sums of those CRPS values over the blocks of each size, the score becomes `price CRPS + λ × (S60/1 + S15/4 + S5/12) / 3` = `price CRPS + 1.75·S60 + 0.4375·S15 + 0.1458·S5`, with `λ = 5.25`. Full spec in [README §1.3](https://github.com/synthdataco/synth-subnet/blob/main/README.md#volatility-component-crypto-1h-only)
-- **Miner action required (`crypto-1h` only):** no configuration or response-format change, but a simulator whose per-minute volatility structure is miscalibrated now pays for it even when its price levels are right — worth revisiting before this goes live. `crypto-24h` and `com-equ-24h` scoring is unchanged
-- The [synth-lib backtester](https://github.com/synthdataco/synth-lib) replays the new term, so the impact on your own predictions can be measured before the switch
+- Emission burn restored at 22% of miner emission based on overall model quality compared to benchmarks
+- Synth Ultra (VHFT) adds ETH, SOL and XRP next to BTC. Each asset is its own competition, and VHFT's share of emission is split equally across the four. Shadow period from 2026-10-16, rewards from 2026-10-20. BTC-only miners need no change; to compete on the new assets, branch on `payload["prompt"]["asset"]` and resubmit ([synth-ultra](https://github.com/synthdataco/synth-ultra)).
+- Synth Ultra registration is automated from 2026-10-19, with more miner slots and a daily registration limit.
 
-## Unreleased — scheduled for 2026-07-23
+## v1.14.0 — 2026-10-07 · Validator latency
 
-- Emission burn removed: so 100% of miner emission goes to miners again (the owner had taken ~50% since 2025-10-17).
-- Price feeds migrate off Pyth: validator ground-truth candles and the reference miner's spot price now come from **Binance spot** for BTC/ETH/SOL/XRP (`BTCUSDT`, …), **Hyperliquid spot** for HYPE (`HYPE/USDC`), and **Hyperliquid perps** for equities/commodities (`xyz:*`). The reference miner no longer uses `PYTH_API_KEY`, Pyth Lazer, or Pyth Hermes (Hermes remains only to serve SPYX prompts from not-yet-upgraded validators during the rollout)
-- SPYX (tokenized SPY, Pyth) is retired and replaced by a new asset **SP500** (S&P 500 index, Hyperliquid `xyz:SP500`, ~10x SPYX's price level) in the Commodities/Equities 24h competition. Prompting swaps at deploy; in-flight SPYX requests are still scored from Pyth and SPYX scores age out of the 10-day moving-average window naturally. SP500 inherits SPYX's rolling-average weight (`3.437935601155441`)
-- Validator: optional Pub/Sub notification for stored prediction cohorts.
-- `BINANCE_API_HOST` process-env override (default `https://api.binance.com`): `api.binance.com` returns HTTP 451 from geo-restricted regions (e.g. the US) — set `https://data-api.binance.vision` (Binance's public market-data host) there. Validators and miners hosted in restricted regions need this to fetch BTC/ETH/SOL/XRP
+- Validator perf: the time from the miner deadline to the stored-predictions notification is reduced.
+- Scoring fix: a miner whose softmax weight underflows to zero now keeps its `miner_rewards` row (weight `0` with its smoothed score) instead of being dropped from the rewards table ([#326](https://github.com/synthdataco/synth-subnet/pull/326))
+- Neuron startup retries the chain connection instead of exiting on a transient endpoint failure ([#328](https://github.com/synthdataco/synth-subnet/pull/328))
+
+## v1.13.0 — 2026-09-22 · Crypto 1h volatility scoring
+
+- **The Crypto 1h score now includes a volatility term.** On top of the CRPS on price changes, the 1h prompt score also scores realized volatility: the hour is cut into consecutive blocks of three sizes — one 60-minute, four 15-minute and twelve 5-minute — and for every block the standard deviation of the 1-minute price changes in basis points is CRPS-scored against the realized one. Writing `S60`, `S15` and `S5` for the sums of those CRPS values over the blocks of each size, the score becomes `price CRPS + λ × (S60/1 + S15/4 + S5/12) / 3` = `price CRPS + 1.75·S60 + 0.4375·S15 + 0.1458·S5`, with `λ = 5.25` ([#323](https://github.com/synthdataco/synth-subnet/pull/323)). Full spec in [README §1.3](https://github.com/synthdataco/synth-subnet/blob/main/README.md#volatility-component-crypto-1h-only)
+- **Miner action required (`crypto-1h` only):** no configuration or response-format change, but a simulator whose per-minute volatility structure is miscalibrated now pays for it even when its price levels are right. `crypto-24h` and `com-equ-24h` scoring is unchanged
+- The [synth-lib backtester](https://github.com/synthdataco/synth-lib) replays the new term, so its impact on your own predictions can be measured
+- Base miner: axon responses are gzip-compressed (responses ≥ 1 KB), cutting egress on large prediction payloads. Transparent to validators, and signatures are unaffected ([#319](https://github.com/synthdataco/synth-subnet/pull/319))
+
+## v1.12.0 — 2026-08-31 · Synth Ultra (VHFT) blend
+
+- Validator: Synth Ultra (VHFT, the 10-second BTC competition scored off-subnet) can be blended in as a 4th competition ([#320](https://github.com/synthdataco/synth-subnet/pull/320)). Each cycle the validator pulls per-uid scores from `VHFT_SCORES_URL` and runs them through the same softmax and blend as the other three, so once enabled the four competitions split emissions equally. Inert while `VHFT_SCORES_URL` is unset; the VHFT blend is skipped for a cycle when the snapshot has fewer than 3 or more than 64 participants
+
+## v1.11.1 — 2026-08-03
+
+- Validation: prices that the float32 prediction storage cannot hold (beyond ±3.4e38, or non-zero but below the smallest float32) are now rejected, and a non-finite CRPS scores `-1` without detail. This unblocked Commodities/Equities 24h scoring, which was failing every cycle on a `NaN` in the stored score details ([#311](https://github.com/synthdataco/synth-subnet/pull/311)). Stricter only for values no real price reaches
+- Pyth and SPYX removed entirely now that the SPYX retirement tail has ended: the validator raises for an asset outside the Binance/Hyperliquid maps, and the reference miner no longer has a Hermes path ([#312](https://github.com/synthdataco/synth-subnet/pull/312))
+- Research: TimesFM reports added ([#313](https://github.com/synthdataco/synth-subnet/pull/313))
+
+## v1.11.0 — 2026-07-22 · Off Pyth, SPYX → SP500, burn removed
+
+- Emission burn removed: 100% of miner emission goes to miners again (the owner had taken ~50% since 2025-10-17) ([#306](https://github.com/synthdataco/synth-subnet/pull/306))
+- Price feeds migrate off Pyth: validator ground-truth candles and the reference miner's spot price now come from **Binance spot** for BTC/ETH/SOL/XRP (`BTCUSDT`, …), **Hyperliquid spot** for HYPE (`HYPE/USDC`), and **Hyperliquid perps** for equities/commodities (`xyz:*`). The reference miner no longer uses `PYTH_API_KEY`, Pyth Lazer, or Pyth Hermes (Hermes remains only to serve SPYX prompts from not-yet-upgraded validators during the rollout) ([#304](https://github.com/synthdataco/synth-subnet/pull/304))
+- SPYX (tokenized SPY, Pyth) is retired and replaced by a new asset **SP500** (S&P 500 index, Hyperliquid `xyz:SP500`, ~10x SPYX's price level) in the Commodities/Equities 24h competition. Prompting swaps at deploy; in-flight SPYX requests are still scored from Pyth and SPYX scores age out of the 10-day moving-average window naturally. SP500 inherits SPYX's rolling-average weight (`3.437935601155441`) ([#304](https://github.com/synthdataco/synth-subnet/pull/304))
+- `BINANCE_API_HOST` process-env override (default `https://api.binance.com`): `api.binance.com` returns HTTP 451 from geo-restricted regions (e.g. the US) — set `https://data-api.binance.vision` (Binance's public market-data host) there. Validators and miners hosted in restricted regions need this to fetch BTC/ETH/SOL/XRP ([#304](https://github.com/synthdataco/synth-subnet/pull/304))
+- Validator: optional Pub/Sub notification for stored prediction cohorts, enabled when both `PUBSUB_PROJECT` and `PUBSUB_TOPIC_PREDICTIONS` are set ([#303](https://github.com/synthdataco/synth-subnet/pull/303))
 
 ## v1.10.3 — 2026-07-16
 
