@@ -1,4 +1,4 @@
-"""Read-only Layer-2 soak check for the 3-competition split.
+"""Read-only Layer-2 soak check for the competition split.
 
 Run with the SAME environment as the validator (Postgres creds:
 POSTGRES_USER/PASSWORD/HOST/PORT/DB, and PYTHONPATH=.). Reads only — plain
@@ -6,8 +6,9 @@ SELECTs against the validator's Postgres, no writes.
 
 Verifies, against live validator data:
   - per-competition reward_weight sums for the latest scoring cycle
-    (each `prompt_name` should be ~1/3 = SMOOTHED_SCORE_COEFFICIENT, and the
-    miner total ~1.0 once the owner/burn row is added);
+    (each `prompt_name` should be ~SMOOTHED_SCORE_COEFFICIENT, a VHFT
+    asset's that divided by the number of assets in VHFT_REWARDED_ASSETS;
+    VHFT is expected only when VHFT_SCORES_URL is set, as for the validator);
   - recent miner_scores volume per (asset, time_length) competition slice;
   - the most recent weights_update_history rows resolved SUCCESS.
 
@@ -19,6 +20,7 @@ from sqlalchemy import text
 
 from synth.validator import competition_config
 from synth.validator.miner_data_handler import MinerDataHandler
+from synth.validator.vhft_score_provider import VhftScoreProvider
 
 SCORES_LOOKBACK_HOURS = 24
 WEIGHTS_TO_SHOW = 5
@@ -27,8 +29,13 @@ WEIGHTS_TO_SHOW = 5
 def main() -> None:
     load_dotenv()
     engine = MinerDataHandler().engine
-    expected = competition_config.SMOOTHED_SCORE_COEFFICIENT
-    labels = {c.label for c in competition_config.ALL_COMPETITIONS}
+    # The same VHFT configuration the validator reads, so a skipped asset is
+    # still counted and an unrewarded one is not expected.
+    vhft = VhftScoreProvider.from_env()
+    shares = competition_config.competition_shares(
+        vhft.assets if vhft is not None else []
+    )
+    labels = set(shares)
 
     with engine.connect() as conn:
         # --- per-competition reward_weight sums for the latest cycle ---
@@ -38,7 +45,7 @@ def main() -> None:
         print(f"latest miner_rewards.updated_at: {latest}")
         print(
             f"\n{'prompt_name':28} {'#miners':>8} {'Σ reward_weight':>16} "
-            f"{'vs 1/3':>10}"
+            f"{'vs share':>10}"
         )
         print("-" * 66)
         rows = conn.execute(
@@ -55,7 +62,7 @@ def main() -> None:
         ).fetchall()
         for r in rows:
             flag = "" if r.prompt_name in labels else "  <-- UNKNOWN LABEL"
-            delta = (r.total or 0) - expected
+            delta = (r.total or 0) - shares.get(r.prompt_name, 0.0)
             print(
                 f"{str(r.prompt_name):28} {r.n:>8} {r.total or 0:>16.6f} "
                 f"{delta:>+10.6f}{flag}"

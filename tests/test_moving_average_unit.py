@@ -875,24 +875,31 @@ class TestCombineMovingAverages:
         for r in result:
             assert r["reward_weight"] == pytest.approx(0.03)
 
-    def test_three_competitions_combined_sum_to_one(self):
-        """The 2->3 split invariant: each competition's reward_weights sum to
-        SMOOTHED_SCORE_COEFFICIENT (1/3), so combining the three real labels
-        yields a total of ~1.0. Crypto miners (in both Crypto 1h and Crypto
-        24h) get their two weights summed; a commodity miner appears once.
+    def test_four_competitions_combined_sum_to_one(self):
+        """The split invariant: each competition's reward_weights sum to
+        SMOOTHED_SCORE_COEFFICIENT (1/4), VHFT's split across its assets, so
+        combining all of them yields a total of ~1.0. Crypto miners (in both
+        Crypto 1h and Crypto 24h) get their two weights summed; a commodity
+        miner appears once.
         """
-        third = SMOOTHED_SCORE_COEFFICIENT
+        share = SMOOTHED_SCORE_COEFFICIENT
         data = {
             "Crypto 1h": [
-                {"miner_id": 1, "miner_uid": 1, "reward_weight": third / 2},
-                {"miner_id": 2, "miner_uid": 2, "reward_weight": third / 2},
+                {"miner_id": 1, "miner_uid": 1, "reward_weight": share / 2},
+                {"miner_id": 2, "miner_uid": 2, "reward_weight": share / 2},
             ],
             "Crypto 24h": [
-                {"miner_id": 1, "miner_uid": 1, "reward_weight": third / 2},
-                {"miner_id": 2, "miner_uid": 2, "reward_weight": third / 2},
+                {"miner_id": 1, "miner_uid": 1, "reward_weight": share / 2},
+                {"miner_id": 2, "miner_uid": 2, "reward_weight": share / 2},
             ],
             "Commodities/Equities 24h": [
-                {"miner_id": 3, "miner_uid": 3, "reward_weight": third},
+                {"miner_id": 3, "miner_uid": 3, "reward_weight": share},
+            ],
+            "VHFT 10s": [
+                {"miner_id": 4, "miner_uid": 4, "reward_weight": share / 2},
+            ],
+            "VHFT 10s ETH": [
+                {"miner_id": 4, "miner_uid": 4, "reward_weight": share / 2},
             ],
         }
         result = combine_moving_averages(data)
@@ -902,11 +909,13 @@ class TestCombineMovingAverages:
 
         weights = {r["miner_id"]: r["reward_weight"] for r in result}
         # crypto miners scored in both crypto competitions -> summed
-        assert weights[1] == pytest.approx(third)
-        assert weights[2] == pytest.approx(third)
+        assert weights[1] == pytest.approx(share)
+        assert weights[2] == pytest.approx(share)
         # commodity/equity miner appears only in its one competition
-        assert weights[3] == pytest.approx(third)
-        assert len(result) == 3
+        assert weights[3] == pytest.approx(share)
+        # a VHFT miner's two assets add up to the VHFT block
+        assert weights[4] == pytest.approx(share)
+        assert len(result) == 4
 
 
 # ===========================================================================

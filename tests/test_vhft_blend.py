@@ -13,7 +13,10 @@ from synth.validator.competition_config import (
     SMOOTHED_SCORE_COEFFICIENT,
     VHFT_COMPETITION,
     VHFT_MAX_PARTICIPANTS,
+    VHFT_ASSETS,
     VHFT_MIN_PARTICIPANTS,
+    competition_shares,
+    vhft_competition,
 )
 from synth.validator.moving_average import compute_vhft_smoothed_score
 
@@ -121,4 +124,90 @@ def test_returns_none_when_the_identity_map_is_unavailable():
             handler, {1: 0.4}, SCORED_TIME, VHFT_COMPETITION
         )
         is None
+    )
+
+
+def test_each_asset_gets_its_share_of_the_block():
+    # Four rewarded assets: each competition pays a quarter of the block, so
+    # together they still sum to one competition's SMOOTHED_SCORE_COEFFICIENT.
+    rewards = compute_vhft_smoothed_score(
+        _handler(range(9)),
+        _field(9),
+        SCORED_TIME,
+        vhft_competition("ETH"),
+        share=0.25,
+    )
+    total = sum(r["reward_weight"] for r in rewards)
+    assert total == pytest.approx(SMOOTHED_SCORE_COEFFICIENT / 4)
+    assert {r["prompt_name"] for r in rewards} == {"VHFT 10s ETH"}
+
+
+def test_btc_keeps_the_label_its_rewards_are_stored_under():
+    # miner_rewards.prompt_name has said "VHFT 10s" since before other assets.
+    assert vhft_competition("BTC") is VHFT_COMPETITION
+    assert VHFT_COMPETITION.label == "VHFT 10s"
+    eth = vhft_competition("ETH")
+    assert eth.asset_list == ["ETH"]
+
+
+def test_each_asset_has_its_own_beta():
+    # Scores are in each asset's price units, so the cheaper the asset, the
+    # steeper its beta has to be for the same separation between miners.
+    betas = [vhft_competition(a).softmax_beta for a in VHFT_ASSETS]
+    assert betas[0] == VHFT_COMPETITION.softmax_beta
+    assert all(b < 0 for b in betas)
+    assert betas == sorted(betas, reverse=True)  # BTC, ETH, SOL, XRP: steeper
+
+
+class _Provider:
+    def __init__(self, fields):
+        self.assets = list(fields)
+        self._fields = fields
+
+    def fetch_scores(self, asset="BTC"):
+        return self._fields[asset]
+
+
+def test_the_cycle_pays_each_rewarded_asset_as_its_own_competition(
+    monkeypatch,
+):
+    from synth.validator import competition_config, forward
+
+    monkeypatch.setattr(competition_config, "ALL_COMPETITIONS", [])
+    handler = _handler(range(9))
+    provider = _Provider(
+        {"BTC": _field(9), "ETH": _field(9), "SOL": None, "XRP": _field(9)}
+    )
+
+    combined = forward.calculate_moving_average_and_update_rewards(
+        handler, SCORED_TIME, vhft_provider=provider
+    )
+
+    written = [
+        call.args[0][0]["prompt_name"]
+        for call in handler.update_miner_rewards.call_args_list
+    ]
+    assert written == ["VHFT 10s", "VHFT 10s ETH", "VHFT 10s XRP"]
+    # Each rewarded asset is a quarter of the block; SOL had no snapshot this
+    # cycle, so its quarter goes unpaid rather than to the others.
+    total = sum(r["reward_weight"] for r in combined)
+    assert total == pytest.approx(SMOOTHED_SCORE_COEFFICIENT * 3 / 4)
+
+
+def test_expected_shares_follow_the_rewarded_assets_not_the_ones_seen():
+    # Four rewarded, one skipped this cycle: the others still expect a quarter
+    # of the VHFT share each, not a third.
+    four = competition_shares(["BTC", "ETH", "SOL", "XRP"])
+    assert four["VHFT 10s ETH"] == pytest.approx(
+        SMOOTHED_SCORE_COEFFICIENT / 4
+    )
+    assert sum(four.values()) == pytest.approx(1.0)
+    # BTC alone (the default) gets the whole VHFT share; the others are not
+    # expected at all.
+    btc = competition_shares(["BTC"])
+    assert btc["VHFT 10s"] == pytest.approx(SMOOTHED_SCORE_COEFFICIENT)
+    assert "VHFT 10s ETH" not in btc
+    # without VHFT, only the inline competitions
+    assert not any(
+        label.startswith("VHFT") for label in competition_shares([])
     )
