@@ -202,10 +202,13 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info(
             "starting the low frequency cycle", "cycle_low_frequency"
         )
-        self.forward_prompt(asset, LOW_FREQUENCY)
-        # Refresh after the prompt: the scheduler fires just before a minute
-        # boundary, and a chain sync beforehand would push start_time late.
-        self.refresh_metagraph(METAGRAPH_SYNC_INTERVAL_MINUTES)
+        try:
+            self.forward_prompt(asset, LOW_FREQUENCY)
+        finally:
+            # Refresh after the prompt: the scheduler fires just before a
+            # minute boundary, and a chain sync beforehand would push
+            # start_time late. It must also run when the prompt raises.
+            self.refresh_metagraph(METAGRAPH_SYNC_INTERVAL_MINUTES)
 
     @print_execution_time
     def cycle_scoring(self):
@@ -220,8 +223,10 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info(
             "starting the high frequency cycle", "cycle_high_frequency"
         )
-        self.forward_prompt(asset, HIGH_FREQUENCY)
-        self.refresh_metagraph(METAGRAPH_SYNC_INTERVAL_MINUTES)
+        try:
+            self.forward_prompt(asset, HIGH_FREQUENCY)
+        finally:
+            self.refresh_metagraph(METAGRAPH_SYNC_INTERVAL_MINUTES)
 
     def refresh_metagraph(self, interval_minutes: int):
         """Sync the chain metagraph — refreshing miner_uids and upserting

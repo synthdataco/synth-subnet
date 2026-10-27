@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import logging
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -11,11 +12,13 @@ import bittensor as bt
 from sqlalchemy import Engine, insert, select
 from synth.miner.simulations import generate_simulations
 from synth.simulation_input import SimulationInput
+from synth.validator import forward as forward_module
 from synth.validator import response_validation_v2
 from synth.validator.forward import (
     add_owner_burn,
     calculate_moving_average_and_update_rewards,
     calculate_scores,
+    query_available_miners_and_save_responses,
 )
 from synth.db.models import (
     Miner,
@@ -594,3 +597,52 @@ def test_add_owner_burn_owner_scored_as_miner():
     assert result[-1]["reward_weight"] == pytest.approx(0.5 * 0.22 / 0.78)
     total = sum(r["reward_weight"] for r in result)
     assert result[-1]["reward_weight"] / total == pytest.approx(0.22)
+
+
+def test_query_skips_uids_beyond_the_metagraph_axons(monkeypatch):
+    dialled = []
+
+    def fake_forward(keypair, uuid, external_ip, axons, *args, **kwargs):
+        dialled.append(list(axons))
+        return [[{"prediction": []}, "CORRECT", "1.0", None] for _ in axons]
+
+    monkeypatch.setattr(
+        forward_module, "sync_forward_multiprocess", fake_forward
+    )
+    saved = []
+
+    class StubHandler:
+        bigtable_storage = None
+
+        def save_responses(
+            self, miner_predictions, simulation_input, request_time, keys
+        ):
+            saved.append(sorted(miner_predictions))
+            return None
+
+    base_neuron = SimpleNamespace(
+        metagraph=SimpleNamespace(axons=["axon-0", "axon-1"]),
+        dendrite=SimpleNamespace(
+            keypair=None, uuid="uuid", external_ip="1.2.3.4"
+        ),
+        config=SimpleNamespace(neuron=SimpleNamespace(nprocs=1)),
+    )
+
+    query_available_miners_and_save_responses(
+        base_neuron=base_neuron,
+        miner_data_handler=StubHandler(),
+        miner_uids=[0, 5, 1],
+        simulation_input=SimulationInput(
+            asset="BTC",
+            start_time=(
+                datetime.now(timezone.utc) + timedelta(seconds=60)
+            ).isoformat(),
+            time_increment=60,
+            time_length=3600,
+            num_simulations=1,
+        ),
+        request_time=datetime.now(timezone.utc),
+    )
+
+    assert dialled == [["axon-0", "axon-1"]]
+    assert saved == [[0, 1]]

@@ -233,6 +233,16 @@ def query_available_miners_and_save_responses(
     request_time: datetime,
     prediction_notifier: PredictionNotifier | None = None,
 ):
+    # A chain sync can leave the metagraph with fewer axons than the uids
+    # the miner set was built from: those uids are skipped for this prompt.
+    axon_count = len(base_neuron.metagraph.axons)
+    if any(uid >= axon_count for uid in miner_uids):
+        bt.logging.warning(
+            f"Skipping uids beyond the metagraph's {axon_count} axons",
+            "query_available_miners_and_save_responses",
+        )
+        miner_uids = [uid for uid in miner_uids if uid < axon_count]
+
     bigtable_row_keys = None
     if miner_data_handler.bigtable_storage is not None:
         bigtable_row_keys = miner_data_handler.bigtable_row_keys(
