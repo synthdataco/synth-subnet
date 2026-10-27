@@ -41,6 +41,23 @@ class TestRefreshMetagraph(unittest.TestCase):
         self.assertEqual(fake.miner_uids, [3, 4])
         self.assertIsNotNone(fake.last_metagraph_refresh_at)
 
+    def test_cycles_refresh_even_when_the_prompt_raises(self):
+        # A metagraph the prompt cannot use must still be resynced, or every
+        # later cycle fails the same way.
+        for cycle in (
+            Validator.cycle_high_frequency,
+            Validator.cycle_low_frequency,
+        ):
+            refreshes = []
+            fake = SimpleNamespace(
+                forward_prompt=lambda asset, config: [][0],
+                refresh_metagraph=refreshes.append,
+            )
+            with self.subTest(cycle=cycle.__name__):
+                with self.assertRaises(IndexError):
+                    cycle(fake, "BTC")
+                self.assertEqual(len(refreshes), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
