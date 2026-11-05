@@ -6,8 +6,6 @@ from unittest.mock import patch
 import pytest
 
 # from numpy.testing import assert_almost_equal
-import bittensor as bt
-
 
 from sqlalchemy import Engine, insert, select
 from synth.miner.simulations import generate_simulations
@@ -206,7 +204,7 @@ def test_calculate_moving_average_and_update_rewards_new_miner_registration(
     mock_get_asset_price,
     db_engine: Engine,
 ):
-    bt.logging._logger.setLevel(logging.DEBUG)
+    logging.getLogger("synth").setLevel(logging.DEBUG)
     miner_uids = [10, 20, 33, 40, 50, 60]
     with db_engine.connect() as connection:
         with connection.begin():

@@ -16,11 +16,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import logging
 from datetime import datetime, timedelta
 import random
 import time
 
-import bittensor as bt
 import numpy as np
 
 
@@ -51,6 +51,8 @@ from synth.validator.reward import (
     print_scores_df,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @print_execution_time
 def send_weights_to_bittensor_and_update_weights_history(
@@ -69,10 +71,10 @@ def send_weights_to_bittensor_and_update_weights_history(
     result, msg, uint_uids, uint_weights = base_neuron.set_weights()
 
     if result:
-        bt.logging.success("set_weights on chain successfully!")
+        logger.info("set_weights on chain successfully!")
         msg = "SUCCESS"
     else:
-        bt.logging.warning(msg, "set_weights failed")
+        logger.warning(f"set_weights failed - {msg}")
 
     miner_data_handler.update_weights_history(
         miner_uids=miner_uids,
@@ -185,14 +187,14 @@ def calculate_scores(
     )
 
     if validator_requests is None or len(validator_requests) == 0:
-        bt.logging.warning("No prediction requests found")
+        logger.warning("No prediction requests found")
         return False
 
-    bt.logging.debug(f"found {len(validator_requests)} prediction requests")
+    logger.debug(f"found {len(validator_requests)} prediction requests")
 
     fail_count = 0
     for validator_request in validator_requests:
-        bt.logging.debug(f"validator_request_id: {validator_request.id}")
+        logger.debug(f"validator_request_id: {validator_request.id}")
 
         prompt_scores, detailed_info, real_prices = get_rewards_multiprocess(
             miner_data_handler=miner_data_handler,
@@ -205,7 +207,7 @@ def calculate_scores(
         print_scores_df(prompt_scores, detailed_info)
 
         if prompt_scores is None:
-            bt.logging.warning("No rewards calculated")
+            logger.warning("No rewards calculated")
             fail_count += 1
             continue
 
@@ -237,9 +239,8 @@ def query_available_miners_and_save_responses(
     # the miner set was built from: those uids are skipped for this prompt.
     axon_count = len(base_neuron.metagraph.axons)
     if any(uid >= axon_count for uid in miner_uids):
-        bt.logging.warning(
-            f"Skipping uids beyond the metagraph's {axon_count} axons",
-            "query_available_miners_and_save_responses",
+        logger.warning(
+            f"query_available_miners_and_save_responses - Skipping uids beyond the metagraph's {axon_count} axons",
         )
         miner_uids = [uid for uid in miner_uids if uid < axon_count]
 
@@ -289,9 +290,8 @@ def query_available_miners_and_save_responses(
     )
 
     total_process_time = str(time.time() - start_time)
-    bt.logging.debug(
-        f"Forwarding took {total_process_time} seconds",
-        "base_neuron.dendrite.forward",
+    logger.debug(
+        f"base_neuron.dendrite.forward - Forwarding took {total_process_time} seconds",
     )
 
     miner_predictions = {}
@@ -323,7 +323,7 @@ def query_available_miners_and_save_responses(
                 simulation_input=simulation_input,
             )
     else:
-        bt.logging.info("skip saving because no prediction")
+        logger.info("skip saving because no prediction")
 
 
 @print_execution_time

@@ -75,7 +75,7 @@ def main(args):
         f"synth-profile-metadata|v1|{keypair.ss58_address}"
         f"|{timestamp}|{canonical_payload_hash(payload)}"
     )
-    signature = keypair.sign(data=message)
+    signature = keypair.sign(message)
 
     response = requests.put(
         f"{args.api_url}/v1/profiles/{keypair.ss58_address}/metadata",

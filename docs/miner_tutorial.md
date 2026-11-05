@@ -450,7 +450,7 @@ In particular, it includes a security fix that rejects unsigned requests:
 
 ```python
 if not synapse.dendrite.signature:
-    bt.logging.warning(
+    logger.warning(
         f"Blacklisting unsigned request claiming hotkey "
         f"{synapse.dendrite.hotkey}"
     )

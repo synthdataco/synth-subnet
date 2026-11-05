@@ -15,18 +15,21 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import logging
 import time
 import asyncio
 import threading
 import argparse
 
-import bittensor as bt
 from starlette.middleware.gzip import GZipMiddleware
 
+from synth.base.axon import Axon
 from synth.base.neuron import BaseNeuron
 from synth.utils.config import add_miner_args
 
 from typing import Union
+
+logger = logging.getLogger(__name__)
 
 
 class BaseMinerNeuron(BaseNeuron):
@@ -45,27 +48,26 @@ class BaseMinerNeuron(BaseNeuron):
         super().__init__(config=config)
 
         # The axon handles request processing, allowing validators to send this miner requests.
-        self.axon = bt.Axon(
+        self.axon = Axon(
             wallet=self.wallet,
-            config=self.config() if callable(self.config) else self.config,
+            port=self.config.axon.port,
+            external_ip=self.config.axon.external_ip,
+            external_port=self.config.axon.external_port,
         )
 
         # Attach determiners which functions are called when servicing a request.
-        bt.logging.info("Attaching forward function to miner axon.")
+        logger.info("Attaching forward function to miner axon.")
         self.axon.attach(
             forward_fn=self.forward_miner,
             blacklist_fn=self.blacklist,
             priority_fn=self.priority,
         )
-        bt.logging.info(f"Axon created: {self.axon}")
+        logger.info(f"Axon created: {self.axon}")
 
-        # Gzip-compress axon responses to cut egress on large prediction payloads.
-        # Transparent and signature-safe: the bittensor dendrite (aiohttp) sends
-        # `Accept-Encoding: gzip` and auto-decompresses, and its response handling
-        # never re-hashes the raw bytes, so synapse verification is unaffected —
-        # no validator-side change. Added after the axon is built but before
-        # run()/axon.start(), so it sits outside bittensor's AxonMiddleware and
-        # compresses the final signed response. `minimum_size` skips tiny bodies.
+        # Gzip-compress axon responses (only when the client sends
+        # `Accept-Encoding: gzip`). Must be added before axon.start(); it
+        # wraps the axon's handler, so the final response is compressed.
+        # `minimum_size` skips tiny bodies.
         self.axon.app.add_middleware(
             GZipMiddleware, minimum_size=1024, compresslevel=6
         )
@@ -104,15 +106,15 @@ class BaseMinerNeuron(BaseNeuron):
 
         # Serve passes the axon information to the network + netuid we are hosting on.
         # This will auto-update if the axon port of external ip have changed.
-        bt.logging.info(
-            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
+        logger.info(
+            f"Serving miner axon {self.axon} on network: {self.subtensor.endpoint} with netuid: {self.config.netuid}"
         )
         self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
 
         # Start  starts the miner's axon, making it active on the network.
         self.axon.start()
 
-        bt.logging.info(f"Miner starting at block: {self.block}")
+        logger.info(f"Miner starting at block: {self.block}")
 
         # This loop maintains the miner's operations until intentionally stopped.
         try:
@@ -135,12 +137,12 @@ class BaseMinerNeuron(BaseNeuron):
         # If someone intentionally stops the miner, it'll safely terminate operations.
         except KeyboardInterrupt:
             self.axon.stop()
-            bt.logging.success("Miner killed by keyboard interrupt.")
+            logger.info("Miner killed by keyboard interrupt.")
             exit()
 
         # In case of unforeseen errors, the miner will log the error and continue operations.
         except Exception:
-            bt.logging.exception("Unknown error")
+            logger.exception("Unknown error")
 
     def run_in_background_thread(self):
         """
@@ -148,24 +150,24 @@ class BaseMinerNeuron(BaseNeuron):
         This is useful for non-blocking operations.
         """
         if not self.is_running:
-            bt.logging.debug("Starting miner in background thread.")
+            logger.debug("Starting miner in background thread.")
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
             self.is_running = True
-            bt.logging.debug("Started")
+            logger.debug("Started")
 
     def stop_run_thread(self):
         """
         Stops the miner's operations that are running in the background thread.
         """
         if self.is_running:
-            bt.logging.debug("Stopping miner in background thread.")
+            logger.debug("Stopping miner in background thread.")
             self.should_exit = True
             if self.thread is not None:
                 self.thread.join(5)
             self.is_running = False
-            bt.logging.debug("Stopped")
+            logger.debug("Stopped")
 
     def __enter__(self):
         """
@@ -192,7 +194,7 @@ class BaseMinerNeuron(BaseNeuron):
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
-        # bt.logging.info("resync_metagraph()")
+        # logger.info("resync_metagraph()")
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)

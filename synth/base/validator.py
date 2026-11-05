@@ -18,16 +18,16 @@
 # DEALINGS IN THE SOFTWARE.
 
 
+import logging
 import copy
 import numpy as np
 import argparse
 import threading
 import bittensor as bt
-from bittensor.utils import networking as net
+from bittensor.settings import DEFAULT_ERA_PERIOD
 from typing import List, Union
 
-from bittensor.core.extrinsics.serving import serve_extrinsic
-from bittensor.core.settings import DEFAULT_PERIOD
+from synth.base.serving import serve_axon
 from synth.base.dendrite import SynthDendrite
 from synth.base.neuron import BaseNeuron
 from synth.base.utils.weight_utils import (
@@ -35,6 +35,12 @@ from synth.base.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
 )  # TODO: Replace when bittensor switches to numpy
 from synth.utils.config import add_validator_args
+from synth.utils.networking import get_external_ip
+
+logger = logging.getLogger(__name__)
+
+# Resubmissions after a transient pool rejection (outdated or low-priority).
+SET_WEIGHTS_RETRIES = 2
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -57,10 +63,10 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = SynthDendrite(wallet=self.wallet)
-        bt.logging.info(f"Dendrite: {self.dendrite}")
+        logger.info(f"Dendrite: {self.dendrite}")
 
         # Set up initial scoring weights for validation
-        bt.logging.info("Building validation weights.")
+        logger.info("Building validation weights.")
         self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
 
         # Init sync with the network. Updates the metagraph.
@@ -75,34 +81,30 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def register_ip(self):
         """Detect egress IP and register it on-chain."""
-        bt.logging.info("publishing ip to chain...")
+        logger.info("publishing ip to chain...")
 
         try:
             # Get external ip
             try:
-                external_ip = net.get_external_ip()
-                bt.logging.debug(
-                    f"[green]Found external ip:[/green] [blue]{external_ip}[/blue]"
-                )
+                external_ip = get_external_ip()
+                logger.debug(f"Found external ip: {external_ip}")
             except Exception as error:
-                bt.logging.error(
+                logger.error(
                     "Unable to obtain external IP; check your internet connection. "
                     f"Error: {error}"
                 )
                 return
             # Subscribe to chain
-            serve_extrinsic(
+            serve_axon(
                 subtensor=self.subtensor,
                 wallet=self.wallet,
+                netuid=self.config.netuid,
                 ip=external_ip,
                 port=int(self.config.axon.port),
-                protocol=4,
-                netuid=self.config.netuid,
-                period=DEFAULT_PERIOD,
             )
 
         except Exception as e:
-            bt.logging.error(
+            logger.error(
                 f"Failed to create Axon initialize with exception: {e}"
             )
 
@@ -125,18 +127,18 @@ class BaseValidatorNeuron(BaseNeuron):
             KeyboardInterrupt: If the miner is stopped by a manual interruption.
             Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
         """
-        bt.logging.info(f"Validator starting at block: {self.block}")
+        logger.info(f"Validator starting at block: {self.block}")
 
         try:
             self.forward_validator()
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
-            bt.logging.success("Validator killed by keyboard interrupt.")
+            logger.info("Validator killed by keyboard interrupt.")
             exit()
 
         # In case of unforeseen errors, the validator will log the error and continue operations.
         except Exception:
-            bt.logging.exception("Error during validation")
+            logger.exception("Error during validation")
 
     def set_weights(self):
         """
@@ -145,7 +147,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Check if self.scores contains any NaN values and log a warning if it does.
         if np.isnan(self.scores).any():
-            bt.logging.warning(
+            logger.warning(
                 "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
 
@@ -161,8 +163,8 @@ class BaseValidatorNeuron(BaseNeuron):
         # Compute raw_weights safely
         raw_weights = self.scores / norm
 
-        bt.logging.debug(raw_weights, "raw_weights")
-        bt.logging.debug(str(self.metagraph.uids.tolist()), "raw_weight_uids")
+        logger.debug(f"raw_weights - {raw_weights}")
+        logger.debug(f"raw_weight_uids - {str(self.metagraph.uids.tolist())}")
         # Process the raw weights to final_weights via subtensor limitations.
         (
             processed_weight_uids,
@@ -174,8 +176,8 @@ class BaseValidatorNeuron(BaseNeuron):
             subtensor=self.subtensor,
             metagraph=self.metagraph,
         )
-        bt.logging.debug(processed_weights, "processed_weights")
-        bt.logging.debug(processed_weight_uids, "processed_weight_uids")
+        logger.debug(f"processed_weights - {processed_weights}")
+        logger.debug(f"processed_weight_uids - {processed_weight_uids}")
 
         # Convert to uint16 weights and uids.
         (
@@ -184,28 +186,42 @@ class BaseValidatorNeuron(BaseNeuron):
         ) = convert_weights_and_uids_for_emit(
             uids=processed_weight_uids, weights=processed_weights
         )
-        bt.logging.debug(uint_weights, "uint_weights")
-        bt.logging.debug(uint_uids, "uint_uids")
+        logger.debug(f"uint_weights - {uint_weights}")
+        logger.debug(f"uint_uids - {uint_uids}")
 
         # Set the weights on chain via our subtensor connection.
-        result, msg = self.subtensor.set_weights(
-            wallet=self.wallet,
-            netuid=self.config.netuid,
-            uids=uint_uids,
-            weights=uint_weights,
-            wait_for_finalization=False,
-            wait_for_inclusion=False,
-            version_key=self.spec_version,
-        )
-
-        if msg is None:
-            msg = ""
+        # A client caches the hotkey's nonce per connection; a fresh one
+        # reads it from the node for every submission.
+        subtensor = bt.Subtensor(self.config.subtensor.network)
+        try:
+            extrinsic = subtensor.execute(
+                bt.SetWeights(
+                    netuid=self.config.netuid,
+                    uids=uint_uids,
+                    weights=uint_weights,
+                    version_key=self.spec_version,
+                ),
+                self.wallet,
+                period=DEFAULT_ERA_PERIOD,
+                wait_for_inclusion=False,
+                wait_for_finalization=False,
+                retries=SET_WEIGHTS_RETRIES,
+            )
+            result, msg = extrinsic.success, extrinsic.message
+        except bt.ChainError as error:
+            # Raised by the pre-signing checks (rate limit, registration,
+            # weight count).
+            result, msg = False, f"{error.code.value}: {error.message}"
+        except bt.BittensorError as error:
+            result, msg = False, str(error)
+        finally:
+            subtensor.close()
 
         return result, msg, uint_uids, uint_weights
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
-        bt.logging.info("resync_metagraph()")
+        logger.info("resync_metagraph()")
 
         # Copies state of metagraph before syncing.
         previous_metagraph = copy.deepcopy(self.metagraph)
@@ -217,7 +233,7 @@ class BaseValidatorNeuron(BaseNeuron):
         if previous_metagraph.axons == self.metagraph.axons:
             return
 
-        bt.logging.info(
+        logger.info(
             "Metagraph updated, re-syncing hotkeys, dendrite pool and moving averages"
         )
         # Zero out all hotkeys that have been replaced.
@@ -242,7 +258,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Check if rewards contains NaN values.
         if np.isnan(rewards).any():
-            bt.logging.warning(f"NaN values detected in rewards: {rewards}")
+            logger.warning(f"NaN values detected in rewards: {rewards}")
             # Replace any NaN values in rewards with 0.
             rewards = np.nan_to_num(rewards, nan=0)
 
@@ -257,8 +273,8 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Handle edge case: If either rewards or uids_array is empty.
         if rewards.size == 0 or uids_array.size == 0:
-            bt.logging.info(f"rewards: {rewards}, uids_array: {uids_array}")
-            bt.logging.warning(
+            logger.info(f"rewards: {rewards}, uids_array: {uids_array}")
+            logger.warning(
                 "Either rewards or uids_array is empty. No updates will be performed."
             )
             return
@@ -272,11 +288,11 @@ class BaseValidatorNeuron(BaseNeuron):
 
         self.scores[uids_array] = rewards
 
-        bt.logging.debug(f"Updated moving avg scores: {self.scores}")
+        logger.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):
         """Saves the state of the validator to a file."""
-        bt.logging.info("Saving validator state.")
+        logger.info("Saving validator state.")
 
         # Save the state of the validator to file.
         np.savez(
@@ -288,7 +304,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def load_state(self):
         """Loads the state of the validator from a file."""
-        bt.logging.info("Loading validator state.")
+        logger.info("Loading validator state.")
 
         # Load the state of the validator from file.
         state = np.load(self.config.neuron.full_path + "/state.npz")

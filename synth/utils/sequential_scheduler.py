@@ -1,13 +1,13 @@
+import logging
 from datetime import datetime, timedelta
 import time
-
-
-import bittensor as bt
 
 
 from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.prompt_config import PromptConfig
 from synth.utils.helpers import get_current_time, round_time_to_minutes
+
+logger = logging.getLogger(__name__)
 
 
 class SequentialScheduler:
@@ -28,7 +28,7 @@ class SequentialScheduler:
             try:
                 cycle_start_time = self.run_cycle(cycle_start_time)
             except Exception:
-                bt.logging.exception("Error in cycle ")
+                logger.exception("Error in cycle ")
                 cycle_start_time = get_current_time()
             self.first_run = False
 
@@ -50,7 +50,7 @@ class SequentialScheduler:
         )
         asset = self.select_asset(latest_asset, asset_list)
 
-        bt.logging.info(
+        logger.info(
             f"Scheduling next {prompt_config.label} frequency cycle for asset {asset} in {delay} seconds"
         )
 
@@ -82,7 +82,7 @@ class SequentialScheduler:
         next_cycle_diff = next_cycle - get_current_time()
         delay = int(next_cycle_diff.total_seconds())
         if delay <= 0:
-            bt.logging.warning("Calculated delay is non-positive")
+            logger.warning("Calculated delay is non-positive")
             current_time = get_current_time()
             diff = round_time_to_minutes(current_time) - current_time
             delay = int(diff.total_seconds())
@@ -111,7 +111,7 @@ class SequentialScheduler:
         if not first_run and next_cycle - cycle_start_time > timedelta(
             minutes=interval
         ):
-            bt.logging.warning(
+            logger.warning(
                 "Cycle overran its slot, skipping to the next one in its lane"
             )
 

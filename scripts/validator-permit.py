@@ -1,8 +1,11 @@
 import bittensor as bt
-from substrateinterface import SubstrateInterface  # type: ignore
+
+from synth.base.metagraph import Metagraph
 
 netuid = 50
-subnet = bt.Metagraph(netuid)
+network = "finney"
+sub = bt.Subtensor(network)
+subnet = Metagraph(sub, netuid)
 
 try:
     wallet = bt.Wallet(name="validator", hotkey="default")
@@ -17,18 +20,15 @@ print(
 )
 
 hotkey = "5Gy7xTzDwXYw4JV1TUUUt28PwUTQ95HBCYFJMwkaDmnbQUJ5"
-network = "finney"
-sub = bt.Subtensor(network)
-mg = sub.metagraph(netuid)
+mg = subnet
 if hotkey not in mg.hotkeys:
     print(f"Hotkey {hotkey} deregistered")
 else:
     print(f"Hotkey {hotkey} is registered")
 
 print("fetch SubtensorModule ValidatorPermit")
-substrate = SubstrateInterface(url="wss://entrypoint-finney.opentensor.ai:443")
-result = substrate.query("SubtensorModule", "ValidatorPermit", [netuid])
-for uid, permit in enumerate(result.value):
+result = sub.query(bt.storage.SubtensorModule.ValidatorPermit, [netuid])
+for uid, permit in enumerate(result):
     if permit:
         print(f"neuron uid {uid} has permit")
 

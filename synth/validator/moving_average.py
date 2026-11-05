@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 import typing
 
@@ -5,7 +6,6 @@ import typing
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
-import bittensor as bt
 
 
 from synth.utils.logging import print_execution_time
@@ -15,6 +15,8 @@ from synth.validator.competition_config import SMOOTHED_SCORE_COEFFICIENT
 from synth.validator.competition_config import VHFT_MAX_PARTICIPANTS
 from synth.validator.competition_config import VHFT_MIN_PARTICIPANTS
 from synth.validator.reward import compute_softmax
+
+logger = logging.getLogger(__name__)
 
 # Per-asset weighting coefficients for score normalization across assets.
 # Higher coefficient = asset scores contribute more to the smoothed score.
@@ -149,7 +151,7 @@ def compute_smoothed_score(
     all_miner_ids = input_df["miner_id"].unique()
     missing_miners = set(all_miner_ids) - set(rolling_avgs.index)
     for miner_id in missing_miners:
-        bt.logging.warning(
+        logger.warning(
             f"Miner ID {miner_id} has no valid scores in the window. Assigning infinite rolling average."
         )
         rolling_avgs.loc[miner_id] = float("inf")
@@ -251,7 +253,7 @@ def compute_vhft_smoothed_score(
     # registered concentrates exactly as hard as 1 scored uid, and a raw
     # len(vhft_scores) check would miss that.
     if not VHFT_MIN_PARTICIPANTS <= len(scored) <= VHFT_MAX_PARTICIPANTS:
-        bt.logging.warning(
+        logger.warning(
             f"VHFT: {len(scored)} scored participant(s) outside the plausible "
             f"range [{VHFT_MIN_PARTICIPANTS}, {VHFT_MAX_PARTICIPANTS}] — "
             f"skipping the VHFT blend this cycle rather than concentrating "
@@ -284,9 +286,9 @@ def compute_vhft_smoothed_score(
 
 
 def print_rewards_df(moving_averages_data: list[dict], label: str = ""):
-    bt.logging.info(f"Scored responses moving averages {label}")
+    logger.info(f"Scored responses moving averages {label}")
     df = pd.DataFrame.from_dict(moving_averages_data)
-    bt.logging.info(df.to_string())
+    logger.info(df.to_string())
 
 
 @print_execution_time
