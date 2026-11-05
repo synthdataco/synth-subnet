@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.15.0 — 2026-10-28
+
+- Prompt frequency change live on mainnet on 2026-10-28:
+  - Crypto 1h: every asset is prompted every minute. BTC and HYPE were already at 1 minute; ETH, SOL and XRP move from 5 minutes to 1 minute
+  - Crypto 24h: every asset is prompted every 12 minutes. BTC moves from 3 minutes to 12 minutes; ETH, SOL, XRP and HYPE stay at 12 minutes
+  - Commodities/Equities 24h: each asset is prompted every 144 minutes instead of every 12 minutes
+
 ## 2026-10-19 · Emission burn at 22%, Synth Ultra adds ETH, SOL and XRP
 
 - Emission burn restored at 22% of miner emission based on overall model quality compared to benchmarks
@@ -21,7 +28,8 @@
 
 ## v1.12.0 — 2026-08-31 · Synth Ultra (VHFT) blend
 
-- Validator: Synth Ultra (VHFT, the 10-second BTC competition scored off-subnet) can be blended in as a 4th competition ([#320](https://github.com/synthdataco/synth-subnet/pull/320)). Each cycle the validator pulls per-uid scores from `VHFT_SCORES_URL` and runs them through the same softmax and blend as the other three, so once enabled the four competitions split emissions equally. Inert while `VHFT_SCORES_URL` is unset; the VHFT blend is skipped for a cycle when the snapshot has fewer than 3 or more than 64 participants
+- Validator: Synth Ultra (VHFT, the 10-second BTC competition scored off-subnet) can be blended in as a 4th competition ([#320](https://github.com/synthdataco/synth-subnet/pull/320)). Each cycle the validator pulls per-uid scores from `VHFT_SCORES_URL` and runs them through a softmax of their own (beta `-4.0`, steeper than the other three because that field is tightly bunched) and the same blend, so once enabled the four competitions split emissions equally. Inert while `VHFT_SCORES_URL` is unset; the VHFT blend is skipped for a cycle when the snapshot has fewer than 3 or more than 64 participants
+- **Scoring: outlier cap on prompt scores, every competition**, live on mainnet 2026-09-04 09:45 UTC. A raw CRPS above 10× the prompt's median CRPS is clipped to that ceiling before the best score is subtracted, so one exploding response can no longer flatten the rest of the field. The p95 that fills missed responses is taken over the responses that were not clipped: a clipped response ranks last, while a miss is scored like the 95th percentile of the miners who answered. Each clipped response is flagged (`score_capped`) in its stored score details ([#321](https://github.com/synthdataco/synth-subnet/pull/321), released in [#320](https://github.com/synthdataco/synth-subnet/pull/320))
 
 ## v1.11.1 — 2026-08-03
 
@@ -33,7 +41,7 @@
 
 - Emission burn removed: 100% of miner emission goes to miners again (the owner had taken ~50% since 2025-10-17) ([#306](https://github.com/synthdataco/synth-subnet/pull/306))
 - Price feeds migrate off Pyth: validator ground-truth candles and the reference miner's spot price now come from **Binance spot** for BTC/ETH/SOL/XRP (`BTCUSDT`, …), **Hyperliquid spot** for HYPE (`HYPE/USDC`), and **Hyperliquid perps** for equities/commodities (`xyz:*`). The reference miner no longer uses `PYTH_API_KEY`, Pyth Lazer, or Pyth Hermes (Hermes remains only to serve SPYX prompts from not-yet-upgraded validators during the rollout) ([#304](https://github.com/synthdataco/synth-subnet/pull/304))
-- SPYX (tokenized SPY, Pyth) is retired and replaced by a new asset **SP500** (S&P 500 index, Hyperliquid `xyz:SP500`, ~10x SPYX's price level) in the Commodities/Equities 24h competition. Prompting swaps at deploy; in-flight SPYX requests are still scored from Pyth and SPYX scores age out of the 10-day moving-average window naturally. SP500 inherits SPYX's rolling-average weight (`3.437935601155441`) ([#304](https://github.com/synthdataco/synth-subnet/pull/304))
+- SPYX (tokenized SPY, Pyth) is retired and replaced by a new asset **SP500** (S&P 500 index, Hyperliquid `xyz:SP500`, ~10x SPYX's price level) in the Commodities/Equities 24h competition. Prompting swapped at the mainnet deploy on 2026-07-23, which also moved scoring to the new feeds; in-flight SPYX requests are still scored from Pyth and SPYX scores age out of the 10-day moving-average window naturally. SP500 inherits SPYX's rolling-average weight (`3.437935601155441`) ([#304](https://github.com/synthdataco/synth-subnet/pull/304))
 - `BINANCE_API_HOST` process-env override (default `https://api.binance.com`): `api.binance.com` returns HTTP 451 from geo-restricted regions (e.g. the US) — set `https://data-api.binance.vision` (Binance's public market-data host) there. Validators and miners hosted in restricted regions need this to fetch BTC/ETH/SOL/XRP ([#304](https://github.com/synthdataco/synth-subnet/pull/304))
 - Validator: optional Pub/Sub notification for stored prediction cohorts, enabled when both `PUBSUB_PROJECT` and `PUBSUB_TOPIC_PREDICTIONS` are set ([#303](https://github.com/synthdataco/synth-subnet/pull/303))
 
