@@ -4,7 +4,7 @@ import time
 
 def downloadtest(url):
     starttime = time.time()
-    response = requests.get(url)
+    response = requests.get(url, timeout=30)
     totaldownloaded = len(response.content)
 
     endtime = time.time()
