@@ -11,6 +11,7 @@
 # The above copyright notice and this permission notice shall be included in all copies or substantial portions of
 # the Software.
 
+import logging
 import typing
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import shared_memory
@@ -23,7 +24,6 @@ import time
 # DEALINGS IN THE SOFTWARE.
 import numpy as np
 import pandas as pd
-import bittensor as bt
 
 
 from synth.db.models import MinerPrediction, ValidatorRequest
@@ -34,6 +34,8 @@ from synth.validator.miner_data_handler import MinerDataHandler
 from synth.validator.price_data_provider import PriceDataProvider
 from synth.validator import response_validation_v2
 from synth.validator import competition_config
+
+logger = logging.getLogger(__name__)
 
 
 # Module level - must be picklable
@@ -283,11 +285,11 @@ def get_rewards_multiprocess(
     try:
         real_prices = price_data_provider.fetch_data(validator_request)
     except Exception as e:
-        bt.logging.warning(f"Error fetching data: {e}")
+        logger.warning(f"Error fetching data: {e}")
         return None, [], []
 
     if real_prices is None or len(real_prices) == 0:
-        bt.logging.warning(
+        logger.warning(
             f"No price data for {validator_request.asset} "
             f"(start_time={validator_request.start_time}). Skipping."
         )
@@ -298,7 +300,7 @@ def get_rewards_multiprocess(
     )
 
     if predictions is None or len(predictions) == 0:
-        bt.logging.warning(
+        logger.warning(
             f"No predictions for request {validator_request.id}. Skipping."
         )
         return None, [], []
@@ -322,7 +324,7 @@ def get_rewards_multiprocess(
     )
 
     # Process in parallel (CPU bound - use ProcessPool)
-    bt.logging.info(f"Starting CRPS calculation for {len(work_items)} miners")
+    logger.info(f"Starting CRPS calculation for {len(work_items)} miners")
     t0 = time.time()
 
     try:
@@ -333,7 +335,7 @@ def get_rewards_multiprocess(
         shm.close()
         shm.unlink()
 
-    bt.logging.info(f"CRPS done in {time.time() - t0:.2f}s")
+    logger.info(f"CRPS done in {time.time() - t0:.2f}s")
 
     # Rebuild results
     scores = []
@@ -352,7 +354,7 @@ def get_rewards_multiprocess(
         process_time,
     ) in results:
         if error:
-            bt.logging.error(f"Miner {miner_uid} error: {error}")
+            logger.error(f"Miner {miner_uid} error: {error}")
 
         scores.append(score)
         detailed_crps_data_list.append(detailed_crps_data)
@@ -366,7 +368,7 @@ def get_rewards_multiprocess(
     )
 
     if prompt_scores is None:
-        bt.logging.warning(
+        logger.warning(
             f"All predictions invalid for request {validator_request.id}. Skipping."
         )
         return None, [], []
@@ -445,7 +447,7 @@ def compute_prompt_scores(score_values: np.ndarray):
         cap = median * OUTLIER_SCORE_MEDIAN_MULTIPLE
         was_capped = score_values > cap
         if was_capped.any():
-            bt.logging.warning(
+            logger.warning(
                 f"{int(was_capped.sum())} of {score_values_valid.size} valid "
                 f"response(s) exceeded {OUTLIER_SCORE_MEDIAN_MULTIPLE:g}x the "
                 f"median CRPS ({median:.4g}); clipping to {cap:.4g} and "
@@ -473,7 +475,7 @@ def compute_prompt_scores(score_values: np.ndarray):
 
 
 def compute_softmax(score_values: np.ndarray, beta: float) -> np.ndarray:
-    bt.logging.info(f"Going to use the following value of beta: {beta}")
+    logger.info(f"Going to use the following value of beta: {beta}")
 
     if len(score_values) == 0:
         return np.array([])
@@ -497,15 +499,15 @@ def clean_numpy_in_crps_data(crps_data: list) -> list:
 
 
 def print_scores_df(prompt_scores, detailed_info):
-    bt.logging.info(f"Scored responses: {prompt_scores}")
+    logger.info(f"Scored responses: {prompt_scores}")
 
     df = pd.DataFrame.from_dict(detailed_info)
     if df.empty:
-        bt.logging.info("No data to display.")
+        logger.info("No data to display.")
         return
     # Drop columns that are not needed for logging
     if "crps_data" in df.columns:
         df = df.drop(columns=["crps_data"])
     if "real_prices" in df.columns:
         df = df.drop(columns=["real_prices"])
-    bt.logging.info(df.to_string())
+    logger.info(df.to_string())

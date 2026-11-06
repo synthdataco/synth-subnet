@@ -10,14 +10,16 @@ Enabled by setting both env vars:
 Publishing is strictly best-effort: any failure is logged and swallowed.
 """
 
+import logging
 import json
 import os
 import typing
 
-import bittensor as bt
 from google.cloud import pubsub_v1
 
 from synth.simulation_input import SimulationInput
+
+logger = logging.getLogger(__name__)
 
 
 class PredictionNotifier:
@@ -31,9 +33,7 @@ class PredictionNotifier:
     def __init__(self, project: str, topic: str):
         self._publisher = pubsub_v1.PublisherClient()
         self._topic_path = self._publisher.topic_path(project, topic)
-        bt.logging.info(
-            f"prediction notifier enabled (topic: {self._topic_path})"
-        )
+        logger.info(f"prediction notifier enabled (topic: {self._topic_path})")
 
     @staticmethod
     def from_env() -> typing.Optional["PredictionNotifier"]:
@@ -70,11 +70,11 @@ class PredictionNotifier:
             )
             future.add_done_callback(self._log_publish_failure)
         except Exception as e:
-            bt.logging.warning(f"prediction notify failed (ignored): {e}")
+            logger.warning(f"prediction notify failed (ignored): {e}")
 
     @staticmethod
     def _log_publish_failure(future: typing.Any) -> None:
         try:
             future.result()
         except Exception as e:
-            bt.logging.warning(f"prediction notify failed (ignored): {e}")
+            logger.warning(f"prediction notify failed (ignored): {e}")

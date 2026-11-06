@@ -1,17 +1,35 @@
+import argparse
 import inspect
 import functools
 import os
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import time
-import bittensor as bt
+from types import SimpleNamespace
 
 import google.cloud.logging
 import google.auth.exceptions
 
+logger = logging.getLogger(__name__)
+
 EVENTS_LEVEL_NUM = 38
 DEFAULT_LOG_BACKUP_COUNT = 10
+LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+LOG_FILE_NAME = "bittensor.log"
+LOG_FILE_MAX_BYTES = 25 * 1024 * 1024
+DEFAULT_LOGGING_DIR = str(Path.home() / ".bittensor" / "miners")
+
+# Loggers of our own code; --logging.* sets their level. Third-party loggers
+# stay at the root level (WARNING).
+APP_LOGGERS = ("synth", "neurons", "__main__")
+
+# Below DEBUG: shown with --logging.trace only.
+TRACE = 5
+logging.addLevelName(TRACE, "TRACE")
+
+_stdout_handler: logging.Handler | None = None
 
 # Third-party loggers that emit high-volume DEBUG/INFO noise. The GCP handler
 # forwards everything at DEBUG (see setup_gcp_logging), so we raise these to
@@ -24,7 +42,7 @@ NOISY_LOGGERS = (
     "sqlalchemy.orm.relationships.RelationshipProperty",
     "sqlalchemy.orm.path_registry",
     "sqlalchemy.pool.impl.QueuePool",
-    "async_substrate_interface",
+    "bittensor",
     "urllib3.connectionpool",
 )
 
@@ -37,6 +55,93 @@ def silence_noisy_loggers():
     """
     for noisy_logger in NOISY_LOGGERS:
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
+
+def add_logging_args(parser: argparse.ArgumentParser):
+    """The --logging.* flags, with bittensor 10's names and defaults."""
+    parser.add_argument(
+        "--logging.debug",
+        action="store_true",
+        help="Turn on debug logging.",
+        default=bool(os.getenv("BT_LOGGING_DEBUG")),
+    )
+    parser.add_argument(
+        "--logging.trace",
+        action="store_true",
+        help="Turn on trace logging (more verbose than debug).",
+        default=bool(os.getenv("BT_LOGGING_TRACE")),
+    )
+    parser.add_argument(
+        "--logging.info",
+        action="store_true",
+        help="Turn on info logging.",
+        default=bool(os.getenv("BT_LOGGING_INFO")),
+    )
+    parser.add_argument(
+        "--logging.record_log",
+        action="store_true",
+        help="Turns on logging to file.",
+        default=bool(os.getenv("BT_LOGGING_RECORD_LOG")),
+    )
+    parser.add_argument(
+        "--logging.logging_dir",
+        type=str,
+        help="Logging default root directory.",
+        default=os.getenv("BT_LOGGING_LOGGING_DIR") or DEFAULT_LOGGING_DIR,
+    )
+
+
+def setup_logging(logging_config):
+    """Send records to stdout, and to <logging_dir>/bittensor.log with
+    --logging.record_log, at the level the --logging.* flags select
+    (WARNING by default)."""
+    global _stdout_handler
+
+    if logging_config.trace:
+        level = TRACE
+    elif logging_config.debug:
+        level = logging.DEBUG
+    elif logging_config.info:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+
+    formatter = logging.Formatter(LOG_FORMAT)
+    root = logging.getLogger()
+    if _stdout_handler is None:
+        _stdout_handler = logging.StreamHandler(sys.stdout)
+        _stdout_handler.setFormatter(formatter)
+        root.addHandler(_stdout_handler)
+
+    if logging_config.record_log and logging_config.logging_dir:
+        logging_dir = os.path.expanduser(logging_config.logging_dir)
+        os.makedirs(logging_dir, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            os.path.join(logging_dir, LOG_FILE_NAME),
+            maxBytes=LOG_FILE_MAX_BYTES,
+            backupCount=DEFAULT_LOG_BACKUP_COUNT,
+        )
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+
+    for name in APP_LOGGERS:
+        logging.getLogger(name).setLevel(level)
+
+
+def setup_logging_from_argv():
+    """setup_logging from the --logging.* flags in sys.argv, for worker
+    processes, which inherit the parent's argv but not its handlers."""
+    parser = argparse.ArgumentParser(add_help=False)
+    add_logging_args(parser)
+    args, _ = parser.parse_known_args()
+    setup_logging(
+        SimpleNamespace(
+            **{
+                key.removeprefix("logging."): value
+                for key, value in vars(args).items()
+            }
+        )
+    )
 
 
 def setup_events_logger(full_path, events_retention_size):
@@ -86,9 +191,9 @@ class WandBHandler(logging.Handler):
             filter = "will be ignored. Please make sure that you are using an active run"
             msg = f"Error occurred while sending alert to wandb: ---{str(err)}--- the message: ---{log_entry}---"
             if filter not in str(err):
-                bt.logging.trace(msg)
+                logger.log(TRACE, msg)
             else:
-                bt.logging.warning(msg)
+                logger.warning(msg)
 
 
 def setup_wandb_alert(wandb_run):
@@ -114,7 +219,7 @@ def setup_gcp_logging(
     Call close_gcp_logging(handler, client) before shutdown to avoid losing logs.
     """
     log_id = f"{log_id_prefix}-synth-validator"
-    bt.logging.info(
+    logger.info(
         f"setting up GCP log forwarder with log_id: {log_id} and cycle_label: {cycle_label}"
     )
     handler = None
@@ -122,13 +227,12 @@ def setup_gcp_logging(
     try:
         client = google.cloud.logging.Client()
     except google.auth.exceptions.GoogleAuthError as e:
-        bt.logging.warning(
-            f"Failed to set up GCP logging. GoogleAuthError: {e}",
-            "log forwarder",
+        logger.warning(
+            f"log forwarder - Failed to set up GCP logging. GoogleAuthError: {e}",
         )
     else:
         if log_id_prefix is None:
-            bt.logging.warning(
+            logger.warning(
                 "log_id_prefix is None. GCP logging will not be set up."
             )
         else:
@@ -154,11 +258,8 @@ def setup_gcp_logging(
 
             # Only suppress stdout logging once we have confirmed a GCP handler is installed,
             # otherwise we risk dropping logs entirely.
-            if handler is not None:
-                listener = getattr(bt.logging, "_listener", None)
-                for stream_handler in getattr(listener, "handlers", ()):
-                    if getattr(stream_handler, "stream", None) is sys.stdout:
-                        stream_handler.setLevel(logging.CRITICAL + 1)
+            if handler is not None and _stdout_handler is not None:
+                _stdout_handler.setLevel(logging.CRITICAL + 1)
 
     return handler, client
 
@@ -172,16 +273,16 @@ def close_gcp_logging(handler, client):
         try:
             handler.flush()
         except Exception as e:
-            bt.logging.warning(f"Error flushing GCP log handler: {e}")
+            logger.warning(f"Error flushing GCP log handler: {e}")
         try:
             handler.close()
         except Exception as e:
-            bt.logging.warning(f"Error closing GCP log handler: {e}")
+            logger.warning(f"Error closing GCP log handler: {e}")
     if client is not None:
         try:
             client.close()
         except Exception as e:
-            bt.logging.warning(f"Error closing GCP log client: {e}")
+            logger.warning(f"Error closing GCP log client: {e}")
 
 
 def print_execution_time(func):
@@ -190,7 +291,7 @@ def print_execution_time(func):
         start = time.time()
         result = await func(*args, **kwargs)
         end = time.time()
-        bt.logging.info(
+        logger.info(
             f"Execution time for {func.__name__}: {end - start:.4f} seconds"
         )
         return result
@@ -200,7 +301,7 @@ def print_execution_time(func):
         start = time.time()
         result = func(*args, **kwargs)
         end = time.time()
-        bt.logging.info(
+        logger.info(
             f"Execution time for {func.__name__}: {end - start:.4f} seconds"
         )
         return result

@@ -11,13 +11,15 @@ Best-effort: any fetch/parse failure returns None and VHFT is simply skipped for
 that cycle; the other three competitions still set weights.
 """
 
+import logging
 import os
 import typing
 
-import bittensor as bt
 import requests
 
 from synth.validator.competition_config import VHFT_ASSETS
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_S = 10
 
@@ -73,7 +75,7 @@ class VhftScoreProvider:
         self._url = url
         # The VHFT assets paid as competitions, each an equal share of the block.
         self.assets = assets or ["BTC"]
-        bt.logging.info(
+        logger.info(
             f"VHFT score provider enabled (url: {self._url}, "
             f"assets: {', '.join(self.assets)})"
         )
@@ -100,13 +102,13 @@ class VhftScoreProvider:
             body = resp.json()
             rows = body.get("scores", [])
         except Exception as e:
-            bt.logging.warning(
+            logger.warning(
                 f"VHFT {asset} fetch_scores failed (skipping it this cycle): "
                 f"{e}"
             )
             return None
         if params is not None and body.get("asset") != asset:
-            bt.logging.warning(
+            logger.warning(
                 f"VHFT: asked for {asset}, the scorer answered for "
                 f"{body.get('asset')!r} (an older scorer without per-asset "
                 f"scores); skipping {asset} this cycle"
@@ -182,12 +184,12 @@ class VhftScoreProvider:
                 scores[parsed[0]] = parsed[1]
 
         if dropped:
-            bt.logging.warning(
+            logger.warning(
                 f"VHFT: dropped {dropped} unusable score row(s) "
                 f"(null/negative mean_crps or malformed uid/weight)"
             )
         if not scores:
-            bt.logging.info("VHFT: no scored participants this cycle")
+            logger.info("VHFT: no scored participants this cycle")
             return None
         # Degenerate-snapshot guard. Real field-relative scores over a 24h window are
         # never all equal (that would need every miner to tie on every prompt), so an
@@ -195,7 +197,7 @@ class VhftScoreProvider:
         # Replaces the old "drop non-positive crps" rule, which cannot survive scores
         # that legitimately start at 0. See the docstring.
         if len(scores) > 1 and len(set(scores.values())) == 1:
-            bt.logging.warning(
+            logger.warning(
                 f"VHFT: all {len(scores)} scored uids share an identical score "
                 f"({next(iter(scores.values()))!r}) — treating as a placeholder "
                 f"snapshot and skipping VHFT this cycle"

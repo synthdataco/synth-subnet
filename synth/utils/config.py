@@ -19,12 +19,18 @@
 import os
 import subprocess
 import argparse
-import bittensor as bt
-from .logging import setup_events_logger
+from types import SimpleNamespace
+
+from .logging import add_logging_args, setup_events_logger
 from synth.validator.storage_backend import (
     STORAGE_BACKEND_CHOICES,
     STORAGE_BACKEND_POSTGRES,
 )
+
+DEFAULT_WALLET_PATH = "~/.bittensor/wallets/"
+DEFAULT_NETWORK = "finney"
+DEFAULT_AXON_PORT = 8091
+DEFAULT_AXON_IP = "[::]"
 
 
 def is_cuda_available():
@@ -45,10 +51,8 @@ def is_cuda_available():
     return "cpu"
 
 
-def check_config(_, config: "bt.Config"):
+def check_config(_, config: SimpleNamespace):
     r"""Checks/validates the config namespace object."""
-    bt.logging.check_config(config)
-
     full_path = os.path.expanduser(
         "{}/{}/{}/netuid{}/{}".format(
             config.logging.logging_dir,  # TODO: change from ~/.bittensor/miners to ~/.bittensor/neurons
@@ -65,10 +69,85 @@ def check_config(_, config: "bt.Config"):
 
     if not config.neuron.dont_save_events:
         # Add custom event logger for the events.
-        events_logger = setup_events_logger(
+        setup_events_logger(
             config.neuron.full_path, config.neuron.events_retention_size
         )
-        bt.logging.register_primary_logger(events_logger.name)
+
+
+def add_wallet_args(parser: argparse.ArgumentParser):
+    """The --wallet.* flags, with bittensor 10's names and defaults."""
+    parser.add_argument(
+        "--wallet.name",
+        type=str,
+        help="The name of the wallet to unlock for running bittensor.",
+        default=os.getenv("BT_WALLET_NAME") or "default",
+    )
+    parser.add_argument(
+        "--wallet.hotkey",
+        type=str,
+        help="The name of the wallet's hotkey.",
+        default=os.getenv("BT_WALLET_HOTKEY") or "default",
+    )
+    parser.add_argument(
+        "--wallet.path",
+        type=str,
+        help="The path to your bittensor wallets",
+        default=os.getenv("BT_WALLET_PATH") or DEFAULT_WALLET_PATH,
+    )
+
+
+def add_subtensor_args(parser: argparse.ArgumentParser):
+    """The --subtensor.network flag: a network name (finney, test, local,
+    archive) or a ws(s):// endpoint."""
+    parser.add_argument(
+        "--subtensor.network",
+        type=str,
+        help="The subtensor network name or ws(s):// endpoint to connect to.",
+        default=os.getenv("BT_SUBTENSOR_NETWORK") or DEFAULT_NETWORK,
+    )
+
+
+def add_axon_args(parser: argparse.ArgumentParser):
+    """The --axon.* flags, with bittensor 10's names and defaults."""
+    parser.add_argument(
+        "--axon.port",
+        type=int,
+        help="The local port this axon endpoint is bound to. i.e. 8091",
+        default=int(os.getenv("BT_AXON_PORT") or DEFAULT_AXON_PORT),
+    )
+    parser.add_argument(
+        "--axon.ip",
+        type=str,
+        help="The local ip this axon binds to. ie. [::]",
+        default=os.getenv("BT_AXON_IP") or DEFAULT_AXON_IP,
+    )
+    parser.add_argument(
+        "--axon.external_port",
+        type=int,
+        help="The public port this axon broadcasts to the network. i.e. 8091",
+        default=os.getenv("BT_AXON_EXTERNAL_PORT") or None,
+    )
+    parser.add_argument(
+        "--axon.external_ip",
+        type=str,
+        help="The external ip this axon broadcasts to the network to. ie. [::]",
+        default=os.getenv("BT_AXON_EXTERNAL_IP") or None,
+    )
+
+
+def nest_namespace(args: argparse.Namespace) -> SimpleNamespace:
+    """Turn dotted argparse destinations ("wallet.name") into nested
+    attributes (config.wallet.name)."""
+    root = SimpleNamespace()
+    for key, value in vars(args).items():
+        node = root
+        *parents, leaf = key.split(".")
+        for part in parents:
+            if not hasattr(node, part):
+                setattr(node, part, SimpleNamespace())
+            node = getattr(node, part)
+        setattr(node, leaf, value)
+    return root
 
 
 def add_args(_, parser):
@@ -280,18 +359,13 @@ def add_validator_args(_, parser: argparse.ArgumentParser):
 def config(cls):
     """
     Returns the configuration object specific to this miner or validator after adding relevant arguments.
+    Unknown command-line arguments are ignored.
     """
-    # bittensor 10.4.x disables CLI argument parsing unless BT_NO_PARSE_CLI_ARGS
-    # is explicitly falsy (it defaults to "true"). Our neurons are configured
-    # entirely through CLI flags, so without this bt.Config(parser) ignores
-    # every --flag and returns only DEFAULTS (config.neuron is None, subtensor
-    # on finney, etc.). Scoped here (not module level) so it only affects
-    # neuron config building, never bittensor's logging machine under pytest.
-    os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
     parser = argparse.ArgumentParser()
-    bt.Wallet.add_args(parser)
-    bt.Subtensor.add_args(parser)
-    bt.logging.add_args(parser)
-    bt.Axon.add_args(parser)
+    add_wallet_args(parser)
+    add_subtensor_args(parser)
+    add_logging_args(parser)
+    add_axon_args(parser)
     cls.add_args(parser)
-    return bt.Config(parser)
+    args, _ = parser.parse_known_args()
+    return nest_namespace(args)

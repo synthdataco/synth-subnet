@@ -1,35 +1,21 @@
-from typing import List, Optional, Tuple, Type, Union
-import time
 import asyncio
-import uuid
-import aiohttp
 import logging
-
+import uuid
+from typing import List, Tuple, Type, Union
 
 import bittensor as bt
-from bittensor_wallet import Keypair, Wallet
 import httpx
-from pydantic import ValidationError
-from synth.utils.logging import print_execution_time
 import uvloop
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
-)
-
+from pydantic import ValidationError
 
 from synth.protocol import Simulation
+from synth.utils.networking import get_external_ip
+
+logger = logging.getLogger(__name__)
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 _ERROR_MAPPINGS: List[Tuple[Type[Exception], Tuple[Union[str, None], str]]] = [
-    # aiohttp server‐side connection issues
-    (aiohttp.ServerTimeoutError, ("504", "Server timeout error")),
-    (aiohttp.ServerDisconnectedError, ("503", "Service disconnected")),
-    (aiohttp.ServerConnectionError, ("503", "Service connection error")),
     # timeouts (asyncio + httpx)
     (asyncio.TimeoutError, ("408", "Request timeout")),
     (httpx.ReadTimeout, ("408", "Read timeout")),
@@ -39,9 +25,6 @@ _ERROR_MAPPINGS: List[Tuple[Type[Exception], Tuple[Union[str, None], str]]] = [
     (httpx.ConnectError, ("503", "Service unavailable")),
     (httpx.PoolTimeout, ("503", "Connection pool timeout")),
     (httpx.ReadError, ("503", "Read error")),
-    # aiohttp payload & response parsing
-    (aiohttp.ClientPayloadError, ("400", "Payload error")),
-    (aiohttp.ClientResponseError, (None, "Client response error")),
     # httpx protocol errors
     (httpx.RemoteProtocolError, ("502", "Protocol error")),
     (httpx.ProtocolError, ("502", "Protocol error")),
@@ -49,9 +32,7 @@ _ERROR_MAPPINGS: List[Tuple[Type[Exception], Tuple[Union[str, None], str]]] = [
     # httpx decoding & status
     (httpx.DecodingError, ("400", "Response decoding error")),
     (httpx.HTTPStatusError, (None, "Client response error")),
-    # catch‐alls (aiohttp first, then httpx)
-    (aiohttp.ClientConnectorError, ("503", "Service unavailable")),
-    (aiohttp.ClientError, ("500", "Client error")),
+    # catch‐alls
     (httpx.RequestError, ("500", "Request error")),
     (httpx.HTTPError, (None, "HTTP error")),
 ]
@@ -73,17 +54,13 @@ def process_error_message(
             break
 
     if status_code is None:
-        if isinstance(exception, aiohttp.ClientResponseError):
-            status_code = str(exception.status)
-        elif isinstance(exception, httpx.HTTPStatusError):
+        if isinstance(exception, httpx.HTTPStatusError):
             status_code = str(exception.response.status_code)
         else:
             # last‐ditch fallback
             status_code = _DENDRITE_DEFAULT_ERROR[0]
 
-    if isinstance(
-        exception, (aiohttp.ClientConnectorError, httpx.HTTPStatusError)
-    ):
+    if isinstance(exception, httpx.HTTPStatusError):
         host = getattr(synapse.axon, "ip", "<unknown>")
         port = getattr(synapse.axon, "port", "<unknown>")
         message = f"{status_message} at {host}:{port}/{request_name}"
@@ -99,278 +76,17 @@ def process_error_message(
     return synapse
 
 
-class SynthDendrite(bt.Dendrite):
-    def __init__(self, wallet: Optional[Union[Wallet, Keypair]] = None):
-        super().__init__(wallet=wallet)
+class SynthDendrite:
+    """The validator's request identity: its hotkey, a uuid for the life of
+    the process and its external ip, sent in every request's headers."""
 
-    async def forward(
-        self,
-        axons: list[Union[bt.AxonInfo, bt.Axon]],
-        synapse: Simulation,
-        client: httpx.AsyncClient,
-        timeout: float = 12,
-    ) -> list[Simulation]:
-        # Pre-process all requests before any async work
-        prepared_requests = self._prepare_all_requests(axons, synapse, timeout)
+    def __init__(self, wallet: bt.Wallet):
+        self.keypair = wallet.hotkey
+        self.uuid = str(uuid.uuid1())
+        self.external_ip = get_external_ip()
 
-        # Fire all HTTP requests concurrently
-        responses = await self._execute_all_requests(
-            client, prepared_requests, timeout
-        )
-
-        return responses
-
-    @print_execution_time
-    def _prepare_all_requests(
-        self,
-        axons: list[Union[bt.AxonInfo, bt.Axon]],
-        synapse: Simulation,
-        timeout: float,
-    ) -> list[dict]:
-        """Pre-process all synapses and serialize everything before async dispatch"""
-        prepared = []
-
-        # Get synapse body once - same for all requests
-        synapse_body = synapse.model_dump()
-        request_name = synapse.__class__.__name__
-
-        for axon in axons:
-            target_axon = axon.info() if isinstance(axon, bt.Axon) else axon
-
-            # Build request endpoint from the synapse class
-            url = self._get_endpoint_url(
-                target_axon, request_name=request_name
-            )
-
-            # Create a copy and preprocess for this specific axon
-            synapse_copy = synapse.model_copy()
-
-            # Preprocess synapse for making a request
-            synapse_copy = self.preprocess_synapse_for_request(
-                target_axon, synapse_copy, timeout
-            )
-
-            # Serialize headers now (this is per-axon due to signatures)
-            headers = synapse_copy.to_headers()
-
-            prepared.append(
-                {
-                    "url": url,
-                    "headers": headers,
-                    "body": synapse_body,
-                    "synapse": synapse_copy,
-                    "target_axon": target_axon,
-                    "request_name": request_name,
-                }
-            )
-
-        return prepared
-
-    @print_execution_time
-    async def _execute_all_requests(
-        self,
-        client: httpx.AsyncClient,
-        prepared_requests: list[dict],
-        timeout: float,
-    ) -> list[Simulation]:
-        """Execute all prepared requests concurrently"""
-
-        async def execute_single(prepared: dict) -> Simulation:
-            return await self._call_http2_prepared(
-                client=client,
-                prepared=prepared,
-                timeout=timeout,
-            )
-
-        return await asyncio.gather(
-            *(execute_single(p) for p in prepared_requests)
-        )
-
-    async def _call_http2_prepared(
-        self,
-        client: httpx.AsyncClient,
-        prepared: dict,
-        timeout: float,
-    ) -> Simulation:
-        """Execute a pre-prepared HTTP request"""
-        # Record start time
-        start_time = time.time()
-
-        synapse = prepared["synapse"]
-        url = prepared["url"]
-        headers = prepared["headers"]
-        body = prepared["body"]
-        request_name = prepared["request_name"]
-
-        try:
-            self._log_outgoing_request(synapse)
-
-            # Make the HTTP POST request
-            response = await client.post(
-                url=url,
-                headers=headers,
-                json=body,
-                timeout=timeout,
-            )
-            response.raise_for_status()
-            # Extract the JSON response from the server
-            json_response = response.json()
-            # Process the server response and fill synapse
-            status = response.status_code
-            resp_headers = response.headers
-            self.process_server_response(
-                status, resp_headers, json_response, synapse
-            )
-
-            # Set process time and log the response
-            synapse.dendrite.process_time = str(time.time() - start_time)
-
-        except Exception as e:
-            synapse = self.process_error_message(synapse, request_name, e)
-
-        finally:
-            self._log_incoming_response(synapse)
-
-            # Return the updated synapse object after deserializing if requested
-            return synapse
-
-    async def _query_all_axons(
-        self,
-        client: httpx.AsyncClient,
-        axons: list,
-        synapse: Simulation,
-        timeout: float,
-    ) -> list[Simulation]:
-        """Query all axons concurrently"""
-
-        async def single_axon_response(
-            target_axon: Union[bt.AxonInfo, bt.Axon],
-        ) -> Simulation:
-            return await self.call_http2(
-                client=client,
-                target_axon=target_axon,
-                synapse=synapse.model_copy(),
-                timeout=timeout,
-            )
-
-        return await asyncio.gather(
-            *(single_axon_response(target_axon) for target_axon in axons)
-        )
-
-    async def call_http2(
-        self,
-        client: httpx.AsyncClient,
-        target_axon: Union[bt.AxonInfo, bt.Axon],
-        synapse: Simulation,
-        timeout: float = 12.0,
-    ) -> Simulation:
-        # Record start time
-        start_time = time.time()
-        target_axon = (
-            target_axon.info()
-            if isinstance(target_axon, bt.Axon)
-            else target_axon
-        )
-
-        # Build request endpoint from the synapse class
-        request_name = synapse.__class__.__name__
-        url = self._get_endpoint_url(target_axon, request_name=request_name)
-
-        # Preprocess synapse for making a request
-        synapse = self.preprocess_synapse_for_request(
-            target_axon, synapse, timeout
-        )
-
-        try:
-            self._log_outgoing_request(synapse)
-
-            # Make the HTTP POST request
-            response = await client.post(
-                url=url,
-                headers=synapse.to_headers(),
-                json=synapse.model_dump(),
-                timeout=timeout,
-            )
-            response.raise_for_status()
-            # Extract the JSON response from the server
-            json_response = response.json()
-            # Process the server response and fill synapse
-            status = response.status_code
-            headers = response.headers
-            self.process_server_response(
-                status, headers, json_response, synapse
-            )
-
-            # Set process time and log the response
-            synapse.dendrite.process_time = str(time.time() - start_time)
-
-        except Exception as e:
-            synapse = self.process_error_message(synapse, request_name, e)
-
-        finally:
-            self._log_incoming_response(synapse)
-
-            # Return the updated synapse object after deserializing if requested
-            return synapse
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
-        retry=retry_if_exception_type(
-            (AttributeError, httpx.HTTPStatusError, httpx.ConnectError)
-        ),
-        reraise=True,
-        before_sleep=before_sleep_log(bt.logging._logger, logging.DEBUG),
-    )
-    async def call_http2_with_retry(
-        self,
-        client: httpx.AsyncClient,
-        target_axon: Union[bt.AxonInfo, bt.Axon],
-        synapse: "Simulation",
-        timeout: float = 12.0,
-    ) -> "Simulation":
-        return await self.call_http2(client, target_axon, synapse, timeout)
-
-    def process_server_response(
-        self, status, _, json_response: dict, local_synapse: Simulation
-    ):
-        # Check if the server responded with a successful status code
-        if status == 200:
-            # If the response is successful, overwrite local synapse state with
-            # server's state only if the protocol allows mutation. To prevent overwrites,
-            # the protocol must set Frozen = True
-            server_synapse = local_synapse.__class__(**json_response)
-            for key in local_synapse.model_dump().keys():
-                try:
-                    # Set the attribute in the local synapse from the corresponding
-                    # attribute in the server synapse
-                    setattr(local_synapse, key, getattr(server_synapse, key))
-                except Exception:
-                    # Ignore errors during attribute setting
-                    pass
-        else:
-            # If the server responded with an error, update the local synapse state
-            if local_synapse.axon is None:
-                local_synapse.axon = bt.TerminalInfo()
-            local_synapse.axon.status_code = status
-            local_synapse.axon.status_message = json_response.get("message")
-
-        # Update the status code and status message of the dendrite to match the axon
-        local_synapse.dendrite.status_code = local_synapse.axon.status_code
-        local_synapse.dendrite.status_message = (
-            local_synapse.axon.status_message
-        )
-
-    def log_exception(self, exception: Exception):
-        log_exception(exception)
-
-    def process_error_message(
-        self,
-        synapse: Simulation,
-        request_name: str,
-        exception: Exception,
-    ):
-        return process_error_message(synapse, request_name, exception)
+    def __str__(self) -> str:
+        return f"dendrite({self.keypair.ss58_address})"
 
 
 def log_exception(exception: Exception):
@@ -378,7 +94,7 @@ def log_exception(exception: Exception):
     Logs an exception with a unique identifier.
 
     This method generates a unique UUID for the error, extracts the error type,
-    and logs the error message using Bittensor's logging system.
+    and logs the error message.
 
     Args:
         exception (Exception): The exception object to be logged.
@@ -391,7 +107,6 @@ def log_exception(exception: Exception):
     if isinstance(
         exception,
         (
-            aiohttp.ClientOSError,
             asyncio.TimeoutError,
             httpx.ConnectError,
             httpx.ReadError,
@@ -402,7 +117,6 @@ def log_exception(exception: Exception):
             ValidationError,
         ),
     ):
-        # bt.logging.trace(f"{error_type}#{error_id}: {exception}")
         pass
     else:
-        bt.logging.exception(f"{error_type}#{error_id}: {exception}")
+        logger.exception(f"{error_type}#{error_id}: {exception}")
