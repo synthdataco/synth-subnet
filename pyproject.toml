@@ -40,7 +40,7 @@ dev = [
     "pytest>=8",
     "black>=25.1.0",
     "testcontainers>=4.9.0",
-    "pylint>=3.3.4",
+    "pylint>=4.0.9",
     "flake8==7.1.2",
     "mypy==1.15.0",
     "mypy-extensions==1.0.0",
