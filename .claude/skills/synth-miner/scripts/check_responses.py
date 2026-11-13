@@ -29,9 +29,9 @@ from synth.validator.prompt_config import HIGH_FREQUENCY, LOW_FREQUENCY
 from synth.validator.response_validation_v2 import CORRECT, validate_responses
 
 PROMPTS = {p.time_length: p for p in (LOW_FREQUENCY, HIGH_FREQUENCY)}
-# The stock miner answers prompts that arrive in the same minute one after
-# another, all within the ~50 s of a crypto-1h prompt.
-PER_CALL_SECONDS = 5
+# The stock miner answers every prompt one after another, and each validator
+# sends five crypto-1h prompts a minute, each due within ~50 s.
+PER_CALL_SECONDS = 1
 
 
 def load_function(spec: str):
@@ -82,7 +82,7 @@ def check(
         )
     if elapsed > PER_CALL_SECONDS:
         return (
-            f"slower than {PER_CALL_SECONDS} s: prompts that arrive together"
+            f"slower than {PER_CALL_SECONDS} s: every validator's prompts"
             " are answered one after another",
             elapsed,
         )

@@ -1,10 +1,20 @@
+name          = "synth-miner"
 region        = "eu-west-1"
 instance_type = "t3.xlarge"
 disk_size_gb  = 30
 key_pair_name = "my-key-pair"
+# ssh_source_ranges = ["203.0.113.7/32"]
 
 # Bittensor config
 wallet_name = "miner"
+hotkey_name = "default"
 network     = "finney"    # "finney" for mainnet, "test" for testnet
 netuid      = 50          # 50 for mainnet, 247 for testnet
 axon_port   = 8091
+
+# Model: empty serves the stock miner; "<campaign>/<leg>" serves an autoquant champion
+champion      = ""        # e.g. "campaign-4/opus-5-5"
+autoquant_ref = "main"    # a commit sha pins the champion's code
+
+# Set in a US region, where api.binance.com is blocked
+# binance_api_host = "https://data-api.binance.vision"

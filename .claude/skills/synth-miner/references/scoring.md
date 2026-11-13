@@ -95,7 +95,9 @@ Consequences:
 - **Density tapering.** Each validator keeps **one prompt per asset per hour** (24h competitions)
   or **per 10 minutes** (`crypto-1h`). The other prompts' predictions are dropped before scoring.
   - The kept prompt is chosen afterwards by a salted hash, so you cannot know which one counts.
-  - That works out to about 24 scored prompts per asset per day for 24h, and about 144 for 1h.
+  - With the v1.15.0 cadence that is about 144 scored prompts per asset per day for `crypto-1h`
+    and about 24 for `crypto-24h`. A `com-equ-24h` asset is prompted only every 144 minutes, so
+    every one of its prompts is scored: about 10 per asset per day.
 - **Settlement.** A prompt can be scored once `start_time + time_length + 90 s` has passed and the
   venue has a closed candle after the window. Missing data delays it, and it is retried later.
 - **First scores** appear about 1–2 h after a `crypto-1h` answer and about 25–27 h after a 24h
@@ -208,3 +210,4 @@ CHANGELOG. Read the newest entries yourself: this list ends when the skill was w
 | 2026-09-22 | `crypto-1h` volatility term (λ = 5.25); responses gzipped                                                                                                                     | Calibrate minute-level volatility            |
 | 2026-10-19 | Owner burn restored; Synth Ultra adds ETH, SOL and XRP (paid from 2026-10-20)                                                                                                 | None for subnet miners                       |
 | 2026-10-21 | `SMOOTHED_SCORE_COEFFICIENT` 1/3 → 1/4: every stored `reward_weight` drops by 25% with no change in emission share; Synth Ultra's quarter is split across its rewarded assets | None. Do not read the drop as a score change |
+| 2026-10-28 | Prompt cadence (v1.15.0): every `crypto-1h` asset every minute, every `crypto-24h` asset every 12 minutes, every `com-equ-24h` asset every 144 minutes                        | Keep each call well under 1 s                |

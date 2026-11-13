@@ -16,8 +16,8 @@ Contents:
 | ------------------------------------ | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Manual install + PM2 (the tutorial)  | You want full control on one VM                                                                  | Your own module plus a `Miner` subclass, or an edit of `generate_simulations`. The stock code fetches the spot price itself, and nothing else             |
 | `miner-setup/docker`                 | You want a container and the stock model                                                         | The image clones upstream at build time. A custom model requires changing the Dockerfile                                                                  |
-| `miner-setup/terraform` (AWS or GCP) | You want a fresh cloud VM with everything installed                                              | Same as manual, under `/opt/synth-subnet`                                                                                                                 |
-| `miner-setup/ansible`                | You already have an Ubuntu VM                                                                    | Same as manual, under `/opt/synth-subnet`                                                                                                                 |
+| `miner-setup/terraform` (AWS or GCP) | You want a fresh cloud VM with a static IP, kept running by systemd                              | An autoquant champion in `/opt/autoquant`, or the stock miner in `/opt/synth-subnet`. One-go path: [gcp-end-to-end.md](gcp-end-to-end.md)                 |
+| `miner-setup/ansible`                | You already have an Ubuntu VM                                                                    | Same as manual, under `/opt/synth-subnet`, supervised by PM2                                                                                              |
 | synth-lib serving shell              | Your model needs recent market history, and you want to serve the same `simulate()` you backtest | synth-lib keeps a 7-day minute store from the scored venues and hands your model the context. It is public code, not yet documented in synth-lib's README |
 
 All five end in the same miner process (`neurons/miner.py`, or a subclass of it), so the protocol,
@@ -47,9 +47,10 @@ firewall and troubleshooting notes apply to all of them. See
 - **Geo-blocking.** `api.binance.com` answers HTTP 451 from some regions, such as the US. Set
   `BINANCE_API_HOST=https://data-api.binance.vision` in the miner's process environment. It is read
   at import time, and the miner does not load `.env` files. The Terraform defaults (EU regions)
-  avoid the problem.
+  avoid the problem; in a US region, set its `binance_api_host` variable.
 - **A stable public IP helps.** The miner publishes its IP on chain only at startup. After an IP
   change, restart the miner, then allow about 15 minutes for validators to pick up the new address.
+  The Terraform path reserves a static IP.
 - **Keep the clock in sync with NTP.** The axon rejects requests whose nonce looks too old.
 
 ## Install synth-subnet (manual path)
@@ -92,24 +93,43 @@ python synth/miner/run.py      # prints start_time, then CORRECT
   - The hotkey is the miner's identity and signs its axon traffic. Its file,
     `hotkeys/<name>`, is plaintext JSON holding the mnemonic and private key.
 - **What the miner process needs:** only the hotkey file and the public coldkey (`coldkeypub.txt`).
-- **The human, on a trusted machine,** does the four steps that need the coldkey:
+- **The human, in their own terminal on their own machine,** does the steps that create or reveal
+  a secret:
   1. Create the wallet. This prompts for a password and prints both mnemonics; back them up
      offline.
-  2. Fund the coldkey.
-  3. Register.
+  2. Write the coldkey password file, if the agent is to register with `scripts/register.py`.
+  3. Fund the coldkey.
   4. Sign the public profile, if wanted.
 
-  btcli 9.22.3 also refuses to register unless the private hotkey file exists on the registering
-  machine, so create both keys there:
+  The agent helps: it gives the exact commands below and shows the public coldkey address to fund
+  (`coldkey` in the output of `register.py --check`). The human runs them outside the agent
+  session, never through the agent's shell or Claude Code's `!` prefix: both put the command and
+  its output, including the mnemonics, into the conversation.
 
   ```bash
-  uv tool install "bittensor-cli==9.23.2"   # on the trusted machine; see "Registration" for versions
+  cd synth-subnet && uv sync --frozen && source .venv/bin/activate     # btcli comes with the venv
   btcli wallet create --wallet.name miner --wallet.hotkey default
   ```
 
+  `wallet create` writes the hotkey unencrypted. For a wallet that has only a coldkey, add a hotkey
+  with `btcli wallet new-hotkey --wallet.name miner --wallet.hotkey default`.
+- **The password file.** `register.py` reads the coldkey password from
+  `~/.synth-miner/coldkey-password`: the first line, in a regular file owned by the user with mode
+  0600. The human writes it without echo, so it never reaches a command line or the shell history:
+
+  ```bash
+  mkdir -p ~/.synth-miner && chmod 700 ~/.synth-miner
+  echo "Coldkey password, then Enter:"; IFS= read -rs PW
+  ( umask 077; printf '%s\n' "$PW" > ~/.synth-miner/coldkey-password ); unset PW
+  ls -l ~/.synth-miner/coldkey-password      # -rw-------
+  ```
+
+  The file unlocks the coldkey, which holds the funds: keep it on the user's own machine, and delete
+  it when no more registrations are planned.
 - **Move the hotkey to the miner host.**
-  - Copy `~/.bittensor/wallets/miner/hotkeys/default` and `coldkeypub.txt` from the trusted
-    machine, through a secrets manager or `scp`.
+  - The agent copies `~/.bittensor/wallets/miner/hotkeys/default` and `coldkeypub.txt` file to file
+    with `scp` or `gcloud compute scp`, then runs `chmod 600` on them there. It never displays
+    them. [gcp-end-to-end.md](gcp-end-to-end.md) step 5 has the commands.
   - Alternatively, the agent writes the public file on the host, and the human restores the
     hotkey there from their own terminal, never through the agent session: the prompt echoes the
     mnemonic.
@@ -120,22 +140,28 @@ python synth/miner/run.py      # prints start_time, then CORRECT
     ```
 
 - **The agent may:**
-  - check that the files exist without reading them:
+  - check that files exist without reading them:
     `ls -l ~/.bittensor/wallets/miner/coldkeypub.txt ~/.bittensor/wallets/miner/hotkeys/default`;
-  - check that no coldkey is on the host: `test ! -e ~/.bittensor/wallets/miner/coldkey`;
+  - check that no coldkey is on the miner host: `test ! -e ~/.bittensor/wallets/miner/coldkey`;
   - restrict the hotkey file:
     `chmod 700 ~/.bittensor/wallets/miner/hotkeys && chmod 600 ~/.bittensor/wallets/miner/hotkeys/default`;
-  - run `btcli wallet overview`, the SDK one-liners below, and PM2.
+  - copy `coldkeypub.txt` and the hotkey file to the miner host file to file, as above;
+  - run `scripts/register.py`, which reads the password file itself and prints only public data;
+  - run `btcli wallet overview`, the SDK one-liners below, and the miner's supervisor.
 - **The agent never:**
   - runs `wallet create`, `new-coldkey`, `new-hotkey`, `regen-coldkey` or `regen-hotkey`;
   - passes `--mnemonic`, `--seed` or `--json`;
   - answers a password or mnemonic prompt;
-  - cats, copies or uploads a key file.
-- **Do not encrypt the hotkey.** The miner decrypts it at startup and PM2 has no terminal to type a
-  password into.
+  - displays a key or password file, or reads one into a variable or an argument (`cat`, `head`,
+    `base64`, `xxd`);
+  - copies a coldkey file anywhere;
+  - prints the environment (`env`, `printenv`, `set`, `export -p`).
+- **Do not encrypt the hotkey.** The miner decrypts it at startup, and neither PM2 nor systemd has a
+  terminal to type a password into. A boolean check that reads no key material:
+  `python -c "import os; from bittensor_wallet import Keyfile; print(Keyfile(os.path.expanduser('~/.bittensor/wallets/miner/hotkeys/default')).is_encrypted())"`.
 - **Wallet paths.** Wallets live in `~/.bittensor/wallets/<name>/` of the user who runs the
-  process. Run btcli, PM2 and the miner as the same user, or pass `--wallet.path`.
-- **Docker.** The wallet sits in a named volume, and `docker compose down -v` deletes it.
+  process. Run btcli, the supervisor and the miner as the same user, or pass `--wallet.path`. On a
+  Terraform VM that is the SSH user: `terraform output wallet_dir`.
 
 ## Registration
 
@@ -147,10 +173,12 @@ python synth/miner/run.py      # prints start_time, then CORRECT
      lists them (bittensor-cli 9.23.2 or later).
    - The docs' "0.25 TAO should be enough" is out of date.
 
-   The bittensor SDK in the synth-subnet venv reads the price reliably:
+   The bittensor SDK in the synth-subnet venv reads the price reliably, and `register.py --check`
+   prints it with the balance and the registration state:
 
    ```bash
    python -c "import bittensor as bt; print(bt.Subtensor('finney').recycle(50))"
+   uv run --script .claude/skills/synth-miner/scripts/register.py --wallet-name miner --hotkey-name default --check
    ```
 
    - `btcli subnets show --netuid 50` prints "Registration cost (recycled)", but with the pinned
@@ -158,20 +186,44 @@ python synth/miner/run.py      # prints start_time, then CORRECT
      (9.23.2 did on 2026-10-27).
    - `btcli subnets burn-cost` is the cost of creating a new *subnet*. It is not this.
 2. **Confirm with the user.** Show them the price and get an explicit yes. The TAO is not refunded.
-3. **The human registers** from the trusted machine:
+   On the one-go path, the request itself is the consent, within the ceiling in
+   [gcp-end-to-end.md](gcp-end-to-end.md) step 6.
+3. **Register with `scripts/register.py`.** uv installs the bittensor version pinned in its
+   header:
+
+   ```bash
+   uv run --script .claude/skills/synth-miner/scripts/register.py --wallet-name miner --hotkey-name default --max-tao <CEILING> --dry-run
+   uv run --script .claude/skills/synth-miner/scripts/register.py --wallet-name miner --hotkey-name default --max-tao <CEILING>
+   ```
+
+   - `--max-tao` is an absolute ceiling. The script signs `register_limit` with that limit price, so
+     the chain refuses the registration if the price rises above it before inclusion.
+   - Before it reads the password, it stops when the hotkey already has a UID (exit 0, nothing
+     spent), belongs to another coldkey (4), the price is above the ceiling (5), or the balance
+     cannot cover price plus fee (6).
+   - It signs with the coldkey alone: the registering machine needs only the hotkey's public address
+     (`hotkeys/<name>pub.txt`, or the hotkey file).
+   - `--dry-run` unlocks the coldkey and signs without submitting, which tests the password file and
+     spends nothing.
+   - Testnet: `--network test --netuid 247`. Exit codes are in `--help` and
+     [gcp-end-to-end.md](gcp-end-to-end.md) step 6.
+4. **Or the human registers with btcli,** from the machine that holds the coldkey:
 
    ```bash
    btcli subnet register --wallet.name miner --wallet.hotkey default --netuid 50
    ```
 
-   - btcli shows the cost and asks to confirm.
-   - Safe registration (on by default, 5% tolerance) fails with `RegistrationPriceLimitExceeded`
-     if the price jumps meanwhile; wait for it to decay and retry.
+   - btcli shows the cost and asks to confirm. It also needs the private hotkey file on that
+     machine.
+   - Safe registration is on by default. It allows the price to rise by `--tolerance` before
+     inclusion: 0.5% by default, although btcli's help text says 5%. Above that it fails with
+     `RegistrationPriceLimitExceeded`. A single competing registration raises the price by
+     `burn_increase_mult`, so wait for it to decay and retry.
    - `Insufficient balance … Current recycle is … TAO` means the coldkey cannot cover price plus
      fee.
    - `HotKeyAlreadyRegisteredInSubNet` means that hotkey already holds a UID.
    - If this btcli fails with `Storage function … not found`, use a newer bittensor-cli.
-4. **Verify:** `btcli wallet overview --wallet.name miner --wallet.hotkey default` lists the UID and,
+5. **Verify:** `btcli wallet overview --wallet.name miner --wallet.hotkey default` lists the UID and,
    once the miner runs, its published address in the AXON column.
 
 ## Immunity, pruning and the ramp-up

@@ -9,6 +9,7 @@ Contents:
 - Rules that keep results honest
 - The iteration loop
 - Studying the field
+- Published champions (autoquant)
 - Shipping a model
 
 The tools here are all in **synth-lib** (https://github.com/synthdataco/synth-lib, Python ≥ 3.12):
@@ -94,8 +95,8 @@ uv run synth_lib/preparation/market_data.py --asset BTC --force-refresh         
   The serving shell sets that variable; for backtests, export it yourself before generating:
   `export SYNTH_BENCHMARK_CALENDAR=$PWD/market_data/calendar/events.parquet`.
 - **Untraded minutes.** Treat a minute as a real print only when `close` and `volume` are both
-  present, and compute returns only between adjacent real prints. That gives the same volatility
-  in backtests (NaN closes) and in serving (filled closes); see [deployment.md](deployment.md) §D.
+  present, and compute returns only between adjacent real prints. Serving passes the same NaN
+  closes as backtests; see [deployment.md](deployment.md) §D.
 
 ## Generating predictions without lookahead
 
@@ -308,8 +309,8 @@ median `crps` of 541.
    journal is your memory if a session dies.
 6. **Measure latency early.** A 10-day `crypto-1h` window is about 1,440 scored prompts per asset:
    at 5 s a prompt, that is 2 h per asset and candidate. Keep `simulate()` well under a second at
-   1000 paths. Live, the whole answer must arrive within the deadline, with several prompts per
-   minute.
+   1000 paths. Live, every validator sends five `crypto-1h` prompts a minute, and they are answered
+   one after another.
 
 Stop when the journal shows that further iteration is not paying off, not when ideas run out.
 
@@ -323,10 +324,55 @@ Stop when the journal shows that further iteration is not paying off, not when i
 
 **Not allowed:** copying, replaying or reselling any individual miner's served paths.
 
+## Published champions (autoquant)
+
+[autoquant](https://github.com/synthdataco/autoquant) is Synth's public benchmark, run on
+synth-lib's campaign engine. Its champions are public code, released to be studied and served.
+
+- **Campaigns and legs.** A campaign runs one leg per AI model. Each leg gets a starter model, a
+  frozen price snapshot that ends at the campaign's data cutoff, the backtester and a fixed budget,
+  and nominates a champion.
+  - From campaign-4 on, the leg's workspace at the nominated commit is published in
+    `campaign_results/<campaign>/<leg>/champion_source/`.
+  - The serving shell is generated from it with `synth_lib.serving.unpack_champion`.
+- **The verdict that counts is `verdict-cutoff-30d/verdict.json`.**
+  - The champion is registered as a new miner on the data cutoff, ramp-up included, and run for the
+    next 30 days on the prompts the validator actually sent, through the validator's own
+    aggregation.
+  - Score = 100 × the mean over the three competitions of min(1, its simulated emissions ÷ the best
+    other miner's). Mean ranks per competition are published beside it.
+  - The README leaderboard is generated from these files. Other `verdict-<tag>` windows are
+    diagnostics.
+- **Only the newest scored campaign counts.**
+  - Scores are relative to the field of their window, so only rows from one campaign compare
+    head to head.
+  - Older windows also predate rule and asset changes, such as the `crypto-1h` volatility term on
+    2026-09-22.
+  - A champion's fitted tables age from its data cutoff.
+- **`scripts/pick_champion.py` applies that rule.**
+  - A leg is eligible when its cutoff-30d verdict was scored on live prompts by the current
+    harness, has no blocking failed asset, covers every asset of the current
+    `competition_config.py` and names the leg's `CHAMPION` commit, and when the leg publishes
+    `champion_source/`.
+  - It takes the campaign whose verdict window starts last, then that campaign's best Score. Ties
+    go to the higher reward against the top miner, then the better mean rank.
+  - It warns without blocking when the data cutoff is more than 45 days old, the window ended more
+    than 30 days ago, the window predates the volatility term, or a newer campaign still waits for
+    its verdict (about 32 days after its cutoff).
+- **Treat a champion as code you now own.** It is a frozen research artifact.
+  - Read its `PROVENANCE.md` and the leg's `report.md`. Some champions hard-code event dates that
+    run out, and some key the time of day in UTC, which shifts an hour against US market hours at
+    each daylight-saving switch.
+  - Backtest it on a recent settled window before relying on it for long.
+  - To improve on it, copy its source into `champions/my_model` and iterate with the loop above.
+
 ## Shipping a model
 
 - **With synth-lib serving** ([deployment.md](deployment.md) §D), the backtested `simulate()` is
   served as is. Re-run the contract gate and the real-store pre-flight first.
+- **A published champion** is unpacked and served without writing a shell:
+  [deployment.md](deployment.md) §D by hand, or the Terraform path in
+  [gcp-end-to-end.md](gcp-end-to-end.md).
 - **With the stock miner,** put the model in your own module behind a `Miner` subclass
   ([protocol.md](protocol.md), Option 2), not in `synth/miner/simulations.py`. You then own the
   market-data plumbing: the stock miner only fetches a spot price.

@@ -1,13 +1,23 @@
 project_id     = "my-gcp-project"
+name           = "synth-miner"
 region         = "europe-west1"
 zone           = "europe-west1-b"
 machine_type   = "e2-standard-4"
 disk_size_gb   = 30
 ssh_public_key = "ssh-ed25519 AAAA... user@host"
 ssh_user       = "miner"
+# ssh_source_ranges = ["203.0.113.7/32"]
 
 # Bittensor config
 wallet_name = "miner"
+hotkey_name = "default"
 network     = "finney"    # "finney" for mainnet, "test" for testnet
 netuid      = 50          # 50 for mainnet, 247 for testnet
 axon_port   = 8091
+
+# Model: empty serves the stock miner; "<campaign>/<leg>" serves an autoquant champion
+champion      = ""        # e.g. "campaign-4/opus-5-5"
+autoquant_ref = "main"    # a commit sha pins the champion's code
+
+# Set in a US region, where api.binance.com is blocked
+# binance_api_host = "https://data-api.binance.vision"

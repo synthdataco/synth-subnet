@@ -42,14 +42,17 @@ Its `simulation_input` is a `SimulationInput`:
   if the request waited in a queue.
 - **Requests come in bursts at minute boundaries.**
   - Every validator runs its 24h and 1h prompt loops in separate processes, and queries every UID.
-  - One validator can send several 1h prompts and a 24h prompt in the same minute.
+  - Since v1.15.0 (2026-10-28), each validator prompts every `crypto-1h` asset every minute: five 1h
+    prompts a minute. It prompts each `crypto-24h` asset every 12 minutes and each `com-equ-24h`
+    asset every 144 minutes.
   - Other validators add their own. The rate is a validator setting, and the CHANGELOG announces
     changes.
   - To see the current pattern, list prompt start times with `/validation/prompts`
     ([api-and-monitoring.md](api-and-monitoring.md)). Arrival is `start_time` minus 60 s (1h) or
     minus 120 s (24h).
-- **Only a sample is scored.** One prompt per asset per hour (24h) or per 10 minutes (1h) ends up
-  scored, and you cannot tell which in advance.
+- **Only a sample is scored.** One prompt per asset per hour (`crypto-24h`) or per 10 minutes
+  (`crypto-1h`) ends up scored, and you cannot tell which in advance. `com-equ-24h` prompts come
+  every 144 minutes, so all of them are scored.
 
 ## The response contract
 
@@ -257,8 +260,10 @@ every prompt that validator sends. Keep the default unless you know why.
   - In bittensor 10.4.1 neither parallelises nor reorders forwards.
 - **Budget for the worst minute.** The last request in a burst finishes after everything queued
   before it, and must still beat the 1h deadline (about 50 s).
-  - For example, eight queued requests at 5 s each just fit; at 10 s each, the fifth onward misses.
-  - Keep each call to about 5 s at 1000 paths.
+  - Every validator that passes the blacklist sends five 1h prompts each minute, plus its 24h
+    prompts, and the miner answers all of them one after another.
+  - For example, with ten such validators, fifty 1h prompts share each minute: about 1 s each at
+    most. Keep each call well under 1 s at 1000 paths.
   - If you queue work yourself, take the earliest `start_time` first: a 1h prompt is due a minute
     before a 24h prompt that arrived with it.
 - **Move fitting off the request path.** Fit volatility and regime state in a background loop, and
@@ -285,7 +290,7 @@ The script:
   `start_time`;
 - calls the function and runs the validator's own `validate_responses` on the raw result. That is
   stricter than live: it also flags numpy rows, which the miner would convert;
-- flags zero or negative prices, and any call slower than 5 s.
+- flags zero or negative prices, and any call slower than 1 s.
 
 Notes:
 - A stock generate function calls the price venues, so set `BINANCE_API_HOST` first on a

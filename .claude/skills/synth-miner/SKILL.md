@@ -3,15 +3,15 @@ name: synth-miner
 description: >-
   Set up, deploy, debug and improve a miner on Synth (synthdata.co), Bittensor subnet 50 (SN50;
   testnet netuid 247), where miners forecast asset prices as 1000 simulated paths scored by CRPS.
-  Covers wallets and registration, serving the axon (PM2, Docker, Terraform, Ansible, or synth-lib's
-  serving shell), plugging a model into generate_simulations or a synth-lib simulate(), validator
-  errors such as "Number of time points is incorrect" or "process time is None", scores, ranks and
-  rewards in crypto-1h, crypto-24h and com-equ-24h, backtesting with synth-lib, checking a UID on
-  api.synthdata.co, and the separate Synth Ultra (VHFT) competition. Use it whenever the user
-  mentions SN50, subnet 50, synthdata, synth-subnet, synth-lib, synth-ultra, a Synth miner, UID or
-  leaderboard, or Synth Ultra, even if they do not say "miner". Not for other Bittensor subnets,
-  running a Synth validator, using Synth's forecasts as a data customer, or simulation code
-  unrelated to Synth.
+  Covers wallets and registration, a one-go GCP deploy of an autoquant champion, serving the axon
+  (PM2, Docker, Terraform, Ansible, or synth-lib's serving shell), plugging a model into
+  generate_simulations or a synth-lib simulate(), validator errors such as "Number of time points
+  is incorrect" or "process time is None", scores, ranks and rewards in crypto-1h, crypto-24h and
+  com-equ-24h, backtesting with synth-lib, checking a UID on api.synthdata.co, and the separate
+  Synth Ultra (VHFT) competition. Use it whenever the user mentions SN50, subnet 50, synthdata,
+  synth-subnet, synth-lib, Synth Ultra, a Synth miner, UID or leaderboard, even if they do not say
+  "miner". Not for other Bittensor subnets, running a Synth validator, using Synth's forecasts as a
+  data customer, or simulation code unrelated to Synth.
 ---
 
 # Running a Synth miner
@@ -58,6 +58,7 @@ Get the plumbing right first, then iterate on the model.
 
 | The user wants to…                                               | Read                                                                                                  |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Go from a funded wallet on this machine to a miner on a GCP VM   | [references/gcp-end-to-end.md](references/gcp-end-to-end.md)                                          |
 | Start mining from scratch (wallet, registration, hardware)       | [references/setup.md](references/setup.md), then [references/deployment.md](references/deployment.md) |
 | Deploy, update or supervise a miner (PM2, Docker, VM, synth-lib) | [references/deployment.md](references/deployment.md)                                                  |
 | Plug a model into the miner, or fix response-format errors       | [references/protocol.md](references/protocol.md)                                                      |
@@ -69,34 +70,51 @@ Get the plumbing right first, then iterate on the model.
 
 ## Ground rules
 
-- **Keys stay with the human.**
-  - Never print, log, store or ask for a mnemonic, seed, password or coldkey.
-  - Never read or copy a hotkey file: it is plaintext JSON holding the hotkey's mnemonic and
-    private key.
-  - The human creates and funds the wallet and registers it, on a trusted machine.
-  - The miner host needs only the hotkey file and `coldkeypub.txt`.
-  - The agent may run commands that use only public data:
-    - `btcli wallet regen-coldkeypub --ss58 …` and `regen-hotkeypub --ss58 …`;
-    - `btcli wallet overview`;
-    - PM2 and the miner itself.
+- **Keys and passwords stay out of the conversation.**
+  - Never print, log, store or ask for a mnemonic, seed phrase, password, private key or API key,
+    and never ask the user to paste one.
+  - Never read a key or password file into a command's output, a variable or an argument: no
+    `cat`, `head`, `base64` or `xxd`. A hotkey file is plaintext JSON holding the hotkey's
+    mnemonic and private key. Existence and mode checks (`ls -l`, `test`) are fine.
+  - Never print the environment (`env`, `printenv`, `set`, `export -p`).
+  - The coldkey never leaves the user's machine. The miner host needs only the hotkey file and
+    `coldkeypub.txt`.
+- **What the agent may do with the wallet:**
+  - copy `coldkeypub.txt` and the hotkey file to the miner host file to file (`scp`,
+    `gcloud compute scp`), then `chmod 600` them there;
+  - run `scripts/register.py`, which reads the coldkey password from its 0600 file itself and
+    prints only public data;
+  - run commands that use only public data: `btcli wallet regen-coldkeypub --ss58 …` and
+    `regen-hotkeypub --ss58 …`, `btcli wallet overview`, `register.py --check`, the SDK
+    one-liners, and the miner and its supervisor.
+- **What only the human does,** in their own terminal: create the wallet and back up its
+  mnemonics, write the password file, and fund the coldkey.
+  - The agent gives them the exact commands ([references/setup.md](references/setup.md)) and shows
+    the public coldkey address to fund.
   - The agent never runs `btcli wallet create`, `new-coldkey`, `new-hotkey`, `regen-coldkey` or
-    `regen-hotkey`, and never passes `--mnemonic`, `--seed` or `--json`. When one of those is
-    needed, the user runs it in their own terminal on the trusted machine, outside the agent
-    session. Never route it through the agent's shell or Claude Code's `!` prefix: both put the
+    `regen-hotkey`, never passes `--mnemonic`, `--seed` or `--json`, and never answers a password
+    or mnemonic prompt.
+  - Never route those commands through the agent's shell or Claude Code's `!` prefix: both put the
     command and its output, including any printed mnemonic, into the conversation.
-- **Money and outside-facing actions need confirmation.** Registration burns TAO, cannot be undone,
-  and its price moves.
-  - Read the live price (see [references/setup.md](references/setup.md)) and get an explicit yes
-    before the user registers.
-  - Do the same before `terraform apply`, before opening ports on a remote host, and before
-    restarting a miner that is earning.
-- **Rehearse offline first.** Use `scripts/check_responses.py` or synth-lib's checks, and the
-  synth-lib backtester.
+- **Money and outside-facing actions need consent.** Registration burns TAO, cannot be undone, and
+  its price moves.
+  - Asking for the one-go GCP deploy ([references/gcp-end-to-end.md](references/gcp-end-to-end.md))
+    with a funded wallet and the password file in place is consent to install uv and Terraform in
+    `~/.synth-miner/bin` when missing, to create its VM, and to register within a ceiling: the
+    user's, or else the live price plus 5%. If the live price is above 2 τ and the user named no
+    ceiling, stop and ask.
+  - Otherwise, read the live price ([references/setup.md](references/setup.md)) and get an explicit
+    yes before registering, before `terraform apply`, before opening ports on a remote host, and
+    before restarting a miner that is earning.
+- **Rehearse offline first.** Use `scripts/check_responses.py`, synth-lib's checks or the contract
+  gate `unpack_champion` runs on a champion, and the synth-lib backtester.
   - Testnet (netuid 247) can rehearse registration, ports and startup.
   - Validator traffic on testnet is not guaranteed: the miner blacklist only answers validators
     staking more than 65000 there too.
 - **Do not copy other miners.** Studying the field in aggregate through the public API is fine.
-  Replaying or reselling another miner's served paths is not.
+  Replaying or reselling another miner's served paths is not. Serving a published autoquant
+  champion is not copying: it is public code released to be served, and each deployment draws its
+  own seed.
 - **Be gentle with the public APIs.**
   - They are rate-limited: synth-lib's README says a couple of requests per second.
   - Space requests out (`miner_status.py` waits about a second between calls), back off on
@@ -106,8 +124,33 @@ Get the plumbing right first, then iterate on the model.
   - Trust synth-subnet `main` and the newest `CHANGELOG.md` entries.
   - Read every new CHANGELOG entry. The "Miner action required" tag is not applied consistently.
 - **The pinned btcli can lag the chain.** On 2026-10-27, bittensor-cli 9.22.3 failed some reads
-  against the chain runtime with `Storage function … not found`, and 9.23.2 worked. Use the SDK
-  one-liners in [references/setup.md](references/setup.md), or a newer bittensor-cli.
+  against the chain runtime with `Storage function … not found`, and 9.23.2 worked. Register with
+  `scripts/register.py`, read with the SDK one-liners in [references/setup.md](references/setup.md),
+  or use a newer bittensor-cli.
+
+## Which model to deploy
+
+- **By default, a published autoquant champion.**
+  [autoquant](https://github.com/synthdataco/autoquant) is Synth's public benchmark: coding agents
+  each research a miner model under a fixed budget, and each campaign's champions are then scored
+  as new miners over the 30 days after their data cutoff.
+  - `scripts/pick_champion.py` reads those verdicts and picks the best eligible champion of the
+    newest scored campaign.
+  - The user may name another `<campaign>/<leg>`, or ask for the stock miner.
+  - See "Published champions" in
+    [references/model-and-backtesting.md](references/model-and-backtesting.md).
+- **The stock miner is a placeholder:** fixed per-asset volatility and Gaussian returns. Expect it
+  to rank low ([references/protocol.md](references/protocol.md)).
+- **A new random seed per deployment.** The Terraform VM draws a random `SYNTH_BENCHMARK_SEED`
+  (also `PYTHONHASHSEED`) when it is provisioned, so two miners serving the same champion do not
+  send identical paths. A live miner has no reproducibility requirement.
+- **`FRED_API_KEY` is optional.** Champions that read synth-lib's event calendar use it for US macro
+  releases, and serve without those events otherwise. Invite the user to get a free key and save it
+  in a 0600 file ([references/gcp-end-to-end.md](references/gcp-end-to-end.md)); never ask for it
+  in the conversation.
+- **A model of your own** follows
+  [references/model-and-backtesting.md](references/model-and-backtesting.md) and
+  [references/deployment.md](references/deployment.md) §D.
 
 ## What happens after registration
 
@@ -147,12 +190,15 @@ Most failing miners break one of these rules. Details and error strings are in
     `float(f"{p:.7e}")`. A float32 value converted back to a Python float has too many digits.
 - **Deadline.** The prompt's `start_time` is the deadline: about 50–60 s after the request for 1h
   prompts and about 110–120 s for 24h prompts.
-  - Several 1h prompts and a 24h prompt can arrive from each validator in the same minute.
-  - The stock `forward_miner` runs model code on the axon's event loop, so it answers them one
-    after another. Keep each answer to a few seconds.
+  - Since v1.15.0, each validator prompts every `crypto-1h` asset every minute (five prompts a
+    minute), every `crypto-24h` asset every 12 minutes and every `com-equ-24h` asset every
+    144 minutes. Every validator that passes the blacklist does the same.
+  - The stock `forward_miner` runs model code on the axon's event loop, so it answers all of them
+    one after another. Keep each answer well under 1 s at 1000 paths.
 - **Check before deploying.**
   - Stock miner: `scripts/check_responses.py` covers every competition shape at 1000 paths and
-    fails any call slower than 5 s.
+    fails any call slower than 1 s.
+  - Published champion: `unpack_champion` runs the live contract gate before it writes anything.
   - synth-lib serving: use the checks in [references/deployment.md](references/deployment.md) §D.
   - `python synth/miner/run.py` only checks BTC 24h with 100 paths.
 
@@ -168,9 +214,9 @@ Full details are in [references/scoring.md](references/scoring.md).
   the 95th percentile of the valid answers. The best score is then subtracted, so the best miner
   gets 0 on that prompt.
   - An absurd answer scores worse than a miss, and a miss still scores near the bottom.
-- **Which prompts count.** Only one prompt per asset per hour (24h competitions), or per 10 minutes
+- **Which prompts count.** Only one prompt per asset per hour (`crypto-24h`), or per 10 minutes
   (`crypto-1h`), is scored. The validator picks it afterwards with a salted hash, so answer every
-  prompt.
+  prompt. `com-equ-24h` prompts come every 144 minutes, so all of them are scored.
 - **Leaderboard.** Each competition takes an asset-weighted mean of prompt scores over its window,
   then a softmax.
   - Small CRPS differences reorder many places.
@@ -197,7 +243,7 @@ Full details are in [references/scoring.md](references/scoring.md).
 
 ## Tools in this skill
 
-Both scripts live in this skill's `scripts/` folder.
+All four scripts live in this skill's `scripts/` folder.
 
 - **`miner_status.py`** uses only the standard library and runs anywhere:
   `python3 <skill dir>/scripts/miner_status.py --uid <UID> [--scores]`. It shows:
@@ -212,8 +258,28 @@ Both scripts live in this skill's `scripts/` folder.
   - It calls a function with `generate_simulations`' signature for every competition asset at
     1000 paths.
   - It checks each output with the validator's own `validate_responses`, and flags prices ≤ 0 and
-    calls slower than 5 s.
+    calls slower than 1 s.
   - It exits 1 on any failure.
+- **`pick_champion.py`** uses only the standard library and git, and needs Python ≥ 3.10 (macOS's
+  `/usr/bin/python3` is 3.9), so run it with uv:
+  `uv run --script <skill dir>/scripts/pick_champion.py [--campaign C [--leg L [--force]]] [--list]`.
+  - It reads autoquant's published `verdict-cutoff-30d` files from a partial clone in
+    `~/.cache/synth-miner/autoquant`, and never downloads LFS files.
+  - It checks each leg against the current `competition_config.py`, then prints the pick as JSON:
+    score, ranks, window, staleness warnings, and the Terraform `champion` and `autoquant_ref`.
+  - It exits 1 when nothing is eligible, or when `--leg` names an ineligible leg.
+- **`register.py`** pins its own bittensor version in a PEP 723 header, so uv runs it from any
+  directory:
+  `uv run --script <skill dir>/scripts/register.py --wallet-name W [--hotkey-name H] (--check | --max-tao X [--dry-run])`.
+  - `--check` prints the registration state, the live price and the balance, and needs no
+    password. For a registered hotkey it adds `axon`, the `ip:port` published on chain (`null`
+    until the miner serves).
+  - Otherwise it signs `register_limit` with the coldkey, so the chain refuses a price above
+    `--max-tao`. The laptop needs only the hotkey's public address.
+  - It reads the password from `~/.synth-miner/coldkey-password` (`--password-file`, mode 0600) only
+    after the price and balance checks pass, never prompts, and prints one JSON object of public
+    data. A hotkey that already has a UID is never registered twice.
+  - Exit codes are in `--help` and [references/gcp-end-to-end.md](references/gcp-end-to-end.md).
 
 ## Sources of truth
 
@@ -229,6 +295,8 @@ These change. Re-read them when in doubt.
 - **synth-lib** ([github.com/synthdataco/synth-lib](https://github.com/synthdataco/synth-lib)):
   market data, the validator-faithful backtester, and the `synth_lib.serving` miner shell. Its
   research method for model campaigns is in `synth_lib/benchmark/constitution/CAMPAIGN.md.tmpl`.
+- **autoquant** ([github.com/synthdataco/autoquant](https://github.com/synthdataco/autoquant)): the
+  campaigns, each leg's champion source and verdicts, and the leaderboard generated from them.
 - **Synth API:** https://api.synthdata.co/docs. **Monitoring API:**
   https://monitoring.synthdata.co/v1/openapi.json.
 - **Dashboards:** https://synthdata.co/miners/performance and https://taostats.io/subnets/50/metagraph.

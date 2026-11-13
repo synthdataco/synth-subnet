@@ -8,7 +8,8 @@ Contents:
 - Prices and market data
 - Scores and rewards
 - synth-lib serving
-- Docker, PM2 and provisioned VMs
+- Terraform VM (systemd)
+- Docker, PM2 and Ansible VMs
 - Public API
 
 Work in this order:
@@ -108,11 +109,19 @@ Every log line this file relies on is an INFO line. Without `--logging.debug`, `
   - Fix: read it live (`bt.Subtensor('finney').recycle(50)`) and fund the coldkey above price plus
     fee.
 - **`RegistrationPriceLimitExceeded`.**
-  - Cause: the price moved more than the 5% safe-registration tolerance before inclusion.
-  - Fix: wait for it to decay and retry.
+  - Cause: before inclusion, the price rose above `register.py`'s `--max-tao`, or by more than
+    btcli's safe-registration tolerance (0.5% by default). A single competing registration is
+    enough.
+  - Fix: wait for it to decay and retry. Do not raise a ceiling the user set.
+- **`register.py` exits 7 or 8.**
+  - Cause: 7, the password file is missing, empty, a symlink, not owned by the user, or readable or
+    writable by group or others; 8, the password does not decrypt the coldkey.
+  - Fix: the user rewrites `~/.synth-miner/coldkey-password` in their own terminal
+    ([setup.md](setup.md)). `--dry-run` tests it without spending anything.
 - **`Error: Wallet 'miner' exists but the hotkey 'default' does not` when registering.**
   - Cause: btcli needs the private hotkey file on the registering machine.
-  - Fix: create the hotkey there (see [setup.md](setup.md)).
+  - Fix: create the hotkey there (see [setup.md](setup.md)), or use `scripts/register.py`, which
+    needs only the hotkey's public address.
 - **`btcli subnets burn-cost` shows a huge number.**
   - Cause: that command prices a new subnet, not a miner registration.
 - **Keyfile not found under `/root/.bittensor/…` (or `/home/<user>/…`) although the wallet
@@ -145,8 +154,11 @@ validator did not get an HTTP 200 before `start_time`. Find which case applies:
 - **Blacklist lines** (`stake below minimum threshold`, `no published IP on-chain`,
   `non-validator hotkey`). Your blacklist rejected the caller, and the validator scores that as a
   miss. Keep `--blacklist.validator_min_stake` at 65000.
-- **An error line `<ErrorType>#<uuid>: <message>` after the request.** The axon answered HTTP 500.
-  The traceback itself is logged only with `--logging.trace`.
+- **An error line `<ErrorType>#<uuid>: <message>` after the request.** The axon logs every rejected
+  request this way. `BlacklistedException`, `NotVerifiedException`, `PriorityException`,
+  `SynapseDendriteNoneException`, `UnknownSynapseError`, `InvalidRequestNameError` and
+  `SynapseParsingError` are callers the axon turned away, often scanners on the open port. Any other type answered HTTP 500. The traceback
+  itself is logged only with `--logging.trace`.
   - `ValueError#…: Out of range float values are not JSON compliant` means a NaN or inf price.
     Bound the paths and keep every price finite.
   - `cannot convert float NaN to integer` comes from the stock rounding helper on a NaN price.
@@ -164,7 +176,8 @@ More cases:
 - **Only 1h prompts time out, and 24h prompts pass.**
   - Cause: the 1h deadline is about 50–60 s, the 24h one about 110–120 s. Often the reference price
     fetch or a slow model is to blame.
-  - Fix: cache prices in the background and keep compute to a few seconds.
+  - Fix: cache prices in the background and keep each call well under 1 s: every validator sends
+    five 1h prompts a minute.
 - **Misses come from only some validators.**
   - Cause: a minimum-stake setting above theirs, or a firewall allow-list missing their IP.
   - Fix: derive the allow-list from the chain with `chain_sync.py`.
@@ -282,7 +295,62 @@ The four common ones:
   - Cause: partitions from an old store.
   - Fix: re-ingest those days with `market_data.py --force-refresh`.
 
-## Docker, PM2 and provisioned VMs
+## Terraform VM (systemd)
+
+- **The serial log or `/var/lib/synth-miner/failed` says `synth-miner: FAILED at <step>`.**
+  - Read the step's output: `sudo journalctl -u google-startup-scripts --no-pager | tail -n 80`
+    (GCP), or `sudo tail -n 80 /var/log/cloud-init-output.log` (AWS).
+  - Fix the cause, then rerun: `sudo google_metadata_script_runner startup` (GCP) or
+    `sudo bash /var/lib/cloud/instance/user-data.txt` (AWS). Every step can run again.
+  - `packages`, `uv`, `synth-subnet`, `autoquant` and `champion-env` are downloads; a rerun usually
+    fixes them. A `FAILED at autoquant` that repeats can also be an `autoquant_ref` git cannot check
+    out (mistyped or unpushed). Compare it with `pick_champion.py`'s `terraform.autoquant_ref`, fix
+    `terraform.tfvars` and recreate the VM: a rerun keeps the script rendered at provisioning.
+- **`FAILED at champion-files`.**
+  - With `Git LFS pointers left in …`: the leg's fitted data did not download, and serving pointer
+    files would run an uncalibrated model. Rerun; if it persists, pick another leg.
+  - Without it: the leg does not exist at `autoquant_ref`, or `git lfs pull` failed with its error
+    just above. Check `champion` and `autoquant_ref` against `scripts/pick_champion.py`'s output,
+    then rerun.
+- **`FAILED at unpack`.** The champion failed the live contract gate or misses data it loads at that
+  ref. The startup-script log above shows the gate's error. Pick another leg from
+  `pick_champion.py --list` and recreate the VM.
+- **`sudo systemctl start synth-miner` returns, but the unit stays inactive.**
+  `systemctl status synth-miner` shows `ConditionPathExists=… was not met`.
+  - Cause: the hotkey file is not at `<wallet_dir>/hotkeys/<hotkey_name>`, for example after copying
+    it under another wallet or hotkey name.
+  - Fix: copy it to that exact path, `chmod 600`, and start the unit again.
+- **The unit restarts every 15 s.**
+  - `is not registered on netuid` in `journalctl -u synth-miner`: the hotkey has no UID yet, or was
+    deregistered. Check with `register.py --check`. Before registration this is expected; the
+    runbook's pre-registration check stops the unit once it has seen the line.
+  - A permission error on a wallet file: the files must belong to the SSH user, mode 600.
+- **Prompts fail with `<ASSET> is still warming up` after each start.** Expected for up to about
+  10 minutes on a champion, until `warm-up complete;`. If the journal shows
+  `warm-up incomplete for BTC: 451 …`, Binance is geo-blocking the VM. On a provisioned VM the
+  Terraform variable no longer reaches it; set it on the VM instead with
+  `echo BINANCE_API_HOST=https://data-api.binance.vision | sudo tee -a /etc/synth-miner/miner.env`
+  and `sudo systemctl restart synth-miner`, and also set `binance_api_host` in `terraform.tfvars` so a
+  recreated VM keeps it.
+- **`fred: fetch failed (FRED_API_KEY is not set)` in the journal.** The champion's event calendar
+  has no US macro releases. Harmless for champions that do not read the calendar. To add the key,
+  see [gcp-end-to-end.md](gcp-end-to-end.md), "Later changes".
+- **The model did not change after editing `champion` and applying.**
+  - Cause: the VM installs once; a later apply only updates the instance metadata.
+  - Fix: `terraform apply -replace=google_compute_instance.miner` (AWS: `aws_instance.miner`), then
+    copy the hotkey again and start the unit.
+- **`terraform apply` fails with `could not find default credentials` or a token error.**
+  - Cause: the Google provider does not read `gcloud auth login`.
+  - Fix: prefix the command with `GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token)"`,
+    or set up Application Default Credentials.
+- **`ssh` fails with `Permission denied (publickey)`.**
+  - Cause: the wrong key or user (GCP: `miner`, AWS: `ubuntu`), or an organization policy that
+    enforces OS Login, which ignores the `ssh-keys` metadata.
+  - Fix: pass `-i ~/.ssh/synth-miner_ed25519`. Under enforced OS Login, use `gcloud compute ssh`.
+- **`ssh` fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` after a `-replace`.** The new VM kept
+  the static IP but has a new host key. Run `ssh-keygen -R <ip>`.
+
+## Docker, PM2 and Ansible VMs
 
 - **`docker compose run --rm miner btcli …` starts the miner instead of btcli.**
   - Fix: add `--entrypoint btcli`.
@@ -293,8 +361,8 @@ The four common ones:
   - Cause: published ports bypass ufw.
   - Fix: filter in the cloud firewall or the `DOCKER-USER` chain.
 - **`chain_sync.py` keeps reporting a blanket rule, and `8091 ALLOW Anywhere` remains.**
-  - Cause: the port was opened as `ufw allow 8091` (any protocol), as the tutorial and the
-    Terraform script do, but `chain_sync.py` removes only `8091/tcp`.
+  - Cause: the port was opened as `ufw allow 8091` (any protocol), as the tutorial does, but
+    `chain_sync.py` removes only `8091/tcp`.
   - Fix: `sudo ufw allow 8091/tcp && sudo ufw delete allow 8091`.
 - **Locked out of SSH after `ufw enable`.**
   - Fix: run `ufw allow OpenSSH` before enabling ufw.
@@ -304,21 +372,18 @@ The four common ones:
 - **`npm install -g pm2` warns about engines on Ubuntu 22.04.**
   - Cause: apt's Node 12 is below PM2 7's Node ≥ 18.
   - Fix: install Node 22 from NodeSource, or `npm install -g pm2@5.4.3`.
-- **`Permission denied` editing `/opt/synth-subnet`, or `uv: command not found`.**
-  - Cause: Terraform and Ansible install as root, uv included.
+- **`Permission denied` editing `/opt/synth-subnet`, or `uv: command not found`, on an Ansible VM.**
+  - Cause: Ansible installs as root, uv included.
   - Fix: `sudo chown -R <user>: /opt/synth-subnet`, install uv for your user, and keep your config
     in `miner.local.config.js`.
 - **`git pull` aborts on `miner.config.js`, or conflicts on `synth/miner/simulations.py`.**
-  - Cause: the provisioners overwrite the tracked config, and upstream changes `simulations.py`
-    with every asset change.
+  - Cause: the Ansible playbook overwrites the tracked config, and upstream changes
+    `simulations.py` with every asset change.
   - Fix: run `git checkout -- miner.config.js` and keep your config in the gitignored local file.
     Keep your model in its own module ([protocol.md](protocol.md)).
 - **A model dependency disappeared after `uv sync`.**
   - Cause: `uv sync` removes packages that are not in synth-subnet's lock.
   - Fix: keep them in your own project, or use `uv sync --inexact`.
-- **The GCP VM misbehaves after a reboot.**
-  - Cause: the startup script runs again on every boot, and it is not idempotent.
-  - Fix: set up `pm2 startup` + `pm2 save`, and remove or guard the startup script.
 
 ## Public API
 

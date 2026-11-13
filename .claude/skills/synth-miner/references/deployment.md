@@ -4,7 +4,7 @@ Contents:
 - Done means
 - A. Manual install under PM2
 - B. Docker (`miner-setup/docker`)
-- C. Cloud VM with Terraform, or Ansible on an existing VM
+- C. Cloud VM with Terraform (systemd), or Ansible on an existing VM (PM2)
 - D. Serving your own `simulate()` with synth-lib
 - Network, firewall and validator allow-list
 - Is it healthy? ("online" is not enough)
@@ -117,7 +117,7 @@ ignored.
 ```bash
 cd miner-setup/docker && cp .env.example .env && $EDITOR .env && docker compose build
 docker compose run --rm --entrypoint btcli miner wallet regen-coldkeypub --wallet.name miner --ss58 <COLDKEY_SS58>
-# the human seeds the hotkey file into the wallet-data volume, or runs regen-hotkey the same way
+# the human restores the hotkey the same way (wallet regen-hotkey), in their own terminal
 docker compose up -d && docker compose logs -f
 ```
 
@@ -136,61 +136,115 @@ Know these before relying on it:
   `BT_AXON_EXTERNAL_IP`, under `services.miner.environment`.
 - **`VALIDATOR_MIN_STAKE=1000` in `.env.example` has no effect.** The code floors the value at
   65000.
-- **Wallets live in the named volume `wallet-data`.** It is `docker_wallet-data` under the default
-  project name. `docker compose down -v` deletes it, so never pass `-v`.
 - **Docker-published ports bypass ufw.** A ufw allow-list, including `chain_sync.py`, does not
   protect a Docker miner. Restrict the port at the cloud firewall or in the `DOCKER-USER` iptables
   chain instead.
 - **`restart: unless-stopped` restarts the container on any exit,** including a deregistered
   hotkey, which then loops; check `docker compose logs`.
 
-## C. Cloud VM with Terraform, or Ansible on an existing VM
+## C. Cloud VM with Terraform (systemd), or Ansible on an existing VM (PM2)
+
+### Terraform (GCP or AWS)
+
+[gcp-end-to-end.md](gcp-end-to-end.md) runs this path on GCP from preflight to a verified miner.
+What `miner-setup/terraform` does:
+- **Resources.** An Ubuntu 22.04 VM (`e2-standard-4` or `t3.xlarge` by default, 30 GB SSD), a static
+  public IP (a GCP address or an AWS Elastic IP), and firewall rules: the axon port from anywhere,
+  SSH from `ssh_source_ranges` (anywhere by default). Names derive from the `name` variable.
+- **Model.** `champion = ""` serves the stock miner from `/opt/synth-subnet`.
+  `champion = "<campaign>/<leg>"` clones autoquant at `autoquant_ref` into `/opt/autoquant`, pulls
+  that leg's Git LFS files, builds a Python 3.12 environment, and unpacks the champion into
+  `/opt/autoquant/champions/champion/` with `unpack_champion`, which runs the contract gate.
+- **Provisioning runs once.** The startup script logs `synth-miner: step <name>` for each step,
+  then `synth-miner: provisioned`, or `synth-miner: FAILED at <step>` (also written to
+  `/var/lib/synth-miner/failed`). Once `/var/lib/synth-miner/provisioned` exists, later boots only
+  log `synth-miner: already provisioned`. Every step can run again:
+  `sudo google_metadata_script_runner startup` (GCP),
+  `sudo bash /var/lib/cloud/instance/user-data.txt` (AWS).
+- **systemd supervises the miner, not PM2.** The unit `synth-miner` runs `/opt/synth-miner/run.sh`
+  as the SSH user (`miner` on GCP, `ubuntu` on AWS), restarts it 15 s after any exit, and starts it
+  at boot. It is enabled but not started, and has a `ConditionPathExists` on the hotkey file, so it
+  stays inactive until the hotkey is on the VM. Logs: `journalctl -u synth-miner`.
+- **Settings** are written once to `/etc/synth-miner/miner.env`: the mode, network, netuid, wallet
+  and hotkey names, the port, `BT_AXON_EXTERNAL_IP` (the static IP), `BINANCE_API_HOST` when set,
+  and a random `SYNTH_BENCHMARK_SEED`, also used as `PYTHONHASHSEED`, drawn on the VM.
+- **`FRED_API_KEY`** is exported by `run.sh` from `~/.config/synth-miner/fred_api_key`, when that
+  file exists.
+- **Wallet directory:** `/home/<ssh user>/.bittensor/wallets/<wallet_name>/`, created with mode
+  0700. `terraform output wallet_dir` prints it.
+
+Preconditions:
+- **GCP.** The Google provider reads Application Default Credentials or
+  `GOOGLE_OAUTH_ACCESS_TOKEN`, not `gcloud auth login`. The project needs the Compute Engine API and
+  a `default` network. The VM turns OS Login off so that `ssh_public_key` works; an organization
+  policy that enforces OS Login, or forbids external IPs, defeats that.
+- **AWS.** An existing `key_pair_name`.
 
 ```bash
-# Terraform. GCP needs project_id + ssh_public_key; AWS needs an existing key_pair_name.
 cd miner-setup/terraform/gcp      # or aws
-cp terraform.tfvars.example terraform.tfvars && $EDITOR terraform.tfvars
-terraform init && terraform apply           # creates billable cloud resources: confirm with the user
-terraform output ssh_command
-# Watch the startup script until "Miner VM setup complete!"
-#   GCP: sudo journalctl -u google-startup-scripts.service -f
-#   AWS: sudo tail -f /var/log/cloud-init-output.log
+cp terraform.tfvars.example terraform.tfvars && $EDITOR terraform.tfvars    # project_id, ssh_public_key, champion, autoquant_ref
+GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token)" terraform init -input=false
+GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token)" terraform apply -input=false   # billable resources: confirm with the user
+terraform output
+```
 
-# Ansible
+Then wait for `synth-miner: provisioned` with a check that ends (GCP: the serial-port loop in
+[gcp-end-to-end.md](gcp-end-to-end.md) step 4; AWS:
+`ssh ubuntu@<ip> "grep -E 'synth-miner: (provisioned|FAILED)' /var/log/cloud-init-output.log"`).
+Copy `coldkeypub.txt` and the hotkey file into `wallet_dir`, register, and run
+`sudo systemctl start synth-miner`.
+
+Know these before relying on it:
+- **Changing a variable later does not change the miner.** A variable the startup script reads only
+  updates the instance metadata on GCP (AWS stops and starts the instance), and the script does
+  nothing once provisioned. `name`, `zone` and `disk_size_gb` recreate the VM and `machine_type`
+  restarts it, so run `terraform plan` before any later apply. To apply a change, recreate the VM with
+  `terraform apply -replace=google_compute_instance.miner` (AWS: `aws_instance.miner`). The new VM
+  has an empty disk and a new seed, behind the same IP: clear the old host key with
+  `ssh-keygen -R <ip>`, copy the hotkey again and start the unit. Do not register again.
+- **A deregistered hotkey restarts in a loop.** The miner exits with status 0 when its hotkey has no
+  UID, and the unit restarts it every 15 s. The journal then shows `is not registered on netuid`.
+- **The axon port is open to everyone,** in the cloud firewall and in ufw (`<port>/tcp`).
+  `chain_sync.py` can narrow ufw; the cloud rule stays open.
+- **Keep `terraform.tfstate`.** It is how the VM is changed or destroyed. `terraform destroy` also
+  releases the IP.
+- **US regions.** Set `binance_api_host` ([setup.md](setup.md)).
+- **AWS instance type.** The AWS default, `t3.xlarge`, is burstable. A CPU-heavy model can run out
+  of credits; pick another `instance_type` if needed.
+
+### Ansible on an existing VM (PM2)
+
+```bash
 cd miner-setup/ansible && cp inventory.example inventory && $EDITOR inventory
 ansible-playbook -i inventory setup-miner.yml      # needs the community.general collection (ufw, npm modules)
 ```
 
-Both paths install into `/opt/synth-subnet` as root, add a 12 GB swapfile, open SSH and the axon
-port to `0.0.0.0/0`, and write a PM2 config with an absolute venv interpreter.
+It installs the stock miner into `/opt/synth-subnet` as root, adds a 12 GB swapfile, opens SSH and
+the axon port (`8091/tcp`) in ufw, and writes a PM2 config with an absolute venv interpreter.
 
-The provisioner then prints next steps that create the wallet and register on the VM. Ignore those
-two. Instead:
+It then prints next steps that create the wallet and register on the VM. Ignore those two. Instead:
 1. Import only the hotkey file and `coldkeypub.txt` ([setup.md](setup.md)).
-2. Have the human register from the machine that holds the coldkey.
+2. Register from the machine that holds the coldkey ([setup.md](setup.md)).
 3. Start PM2 from your own copy of the config:
    `cd /opt/synth-subnet && cp miner.config.js miner.local.config.js && pm2 start miner.local.config.js`.
 
 Gaps to close by hand:
-- **Reboots.** Neither path sets up `pm2 startup` or `pm2 save`. On GCP the startup script also
-  runs again on every boot, and it is not idempotent.
-- **Ownership and uv.** The repo and venv are owned by root, and uv is installed only for root.
+- **Reboots.** It sets up neither `pm2 startup` nor `pm2 save`.
+- **Node and PM2.** It installs Ubuntu's apt Node.js (12.x on 22.04) and the newest PM2, which needs
+  Node ≥ 18. Install Node 22, or pin `pm2@5.4.3` ([setup.md](setup.md)).
+- **Logging.** The generated config passes `--logging.trace`. Switch your copy to `--logging.debug`,
+  or install pm2-logrotate.
+- **Ownership and uv.** The repo and venv are owned by root, and uv is not installed for your user.
   Run `sudo chown -R <user>: /opt/synth-subnet`, then install uv for your user:
   `curl -LsSf https://astral.sh/uv/install.sh | sh && source $HOME/.local/bin/env`.
-- **Tracked config.** The provisioners overwrite the tracked `miner.config.js`. Keep your own
-  config in `miner.local.config.js`.
-- **Ansible re-runs.** The playbook clones with `force: true`, so running it again discards local
-  edits and moves to the newest upstream commit.
-- **IP changes.** Both create ephemeral public IPs. Reserve a static IP, or restart the miner after
-  any IP change.
-- **Firewall scope.** The axon is open to everyone.
-  - The Terraform startup script opens it as `ufw allow 8091` (any protocol), and `chain_sync.py`
-    can only remove a `8091/tcp` rule.
-  - Before adding chain_sync, run `sudo ufw allow 8091/tcp && sudo ufw delete allow 8091`.
-- **Ansible and the cloud firewall.** Ansible configures only the host firewall, so add the cloud
-  ingress rule yourself.
-- **AWS instance type.** The AWS default, `t3.xlarge`, is burstable. A CPU-heavy model can run out
-  of credits; pick another `instance_type` if needed.
+- **Tracked config.** The playbook overwrites the tracked `miner.config.js`. Keep your own config in
+  `miner.local.config.js`.
+- **Re-runs.** The playbook clones with `force: true`, so running it again discards local edits and
+  moves to the newest upstream commit.
+- **IP.** Ansible keeps whatever IP the VM has. Prefer a static one, and restart the miner after any
+  IP change.
+- **Cloud firewall.** Ansible configures only the host firewall, so add the cloud ingress rule
+  yourself.
 
 ## D. Serving your own `simulate()` with synth-lib
 
@@ -206,6 +260,25 @@ subclasses synth-subnet's `Miner` and:
 
 The same `simulate()` runs in synth-lib's backtester, so you serve exactly what you measured
 ([model-and-backtesting.md](model-and-backtesting.md)).
+
+**A published autoquant champion needs none of steps 1–4.** synth-lib's `unpack_champion` copies
+the leg's published source with its fitted data, runs the live contract gate, and writes `miner.py`,
+`entrypoint.sh` and `PROVENANCE.md` beside it. The Terraform path does this on the VM
+([gcp-end-to-end.md](gcp-end-to-end.md)). By hand, from an autoquant checkout:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone --filter=blob:none https://github.com/synthdataco/autoquant.git && cd autoquant
+GIT_LFS_SKIP_SMUDGE=1 git checkout <autoquant_ref>
+git lfs pull --include 'campaign_results/<campaign>/<leg>/**'    # the leg's fitted data, if it keeps any in LFS
+uv sync --frozen --python 3.12                                   # the generated entrypoint runs python3.12
+uv run python -m synth_lib.serving.unpack_champion --campaign <campaign> --leg <leg> --name champion
+NETWORK=finney NETUID=50 COLDKEY_NAME=miner HOTKEY_NAME=default PORT=8091 UV_NO_SYNC=1 ./champions/champion/entrypoint.sh
+```
+
+Launch it from the autoquant root, under a restarting supervisor, with a seed of its own (see
+"Other environment" below). `scripts/pick_champion.py` gives the campaign, leg and ref
+([model-and-backtesting.md](model-and-backtesting.md), "Published champions"). The steps below are
+for a model you researched yourself.
 
 **Prerequisites on the miner host:**
 - uv: `curl -LsSf https://astral.sh/uv/install.sh | sh && source $HOME/.local/bin/env`;
@@ -231,14 +304,13 @@ def simulate(asset, start_time, time_increment, time_length, num_simulations, co
 
 - **`context_prices`** is a minute-indexed DataFrame of the 7 days before `start_time`, with
   columns `open, high, low, close, volume, trade_count`. It holds one asset only.
-- **Missing values differ between serving and backtests.**
-  - When serving, `close` is forward- and back-filled, while the other columns stay NaN on minutes
-    without a trade.
-  - In backtests, `close` itself can be NaN.
+- **Missing values are the same in serving and backtests.** A minute without a trade is NaN in
+  every column, `close` included, and serving drops a trailing run of missing minutes, so the
+  context ends on the last real print.
   - Treat a minute as a real print only when `close` and `volume` are both present, and compute
     returns only between adjacent real prints.
-  - Filled minutes add zero returns; skipping NaNs folds several minutes into one "1-minute"
-    return. Either way, volatility comes out biased. Never interpolate.
+  - Skipping NaNs folds several minutes into one "1-minute" return, and filling them adds zero
+    returns. Either way, volatility comes out biased. Never interpolate.
 - **The index** is a tz-aware `DatetimeIndex` at microsecond resolution (pandas 3). It is unnamed
   when serving and named `timestamp` in backtests. Use datetime accessors, not raw integer
   nanoseconds or the index name.
@@ -347,7 +419,8 @@ EOF
   HYPE and every com-equ asset, older days come back empty. Those assets start with a shorter
   context, which fills in as the miner runs.
 - **Keep `market_data/` on persistent storage.** In a container, mount it as a volume.
-- **Watch the timings.** Keep each call to a few seconds; several prompts share one minute.
+- **Watch the timings.** Keep each call well under 1 s: every validator sends five `crypto-1h`
+  prompts a minute, and `simulate()` runs serially.
 
 **7. Launch** from the synth-lib root, under a supervisor that restarts on exit:
 
@@ -365,11 +438,18 @@ Other environment:
   `os.environ["SYNTH_BENCHMARK_CALENDAR"]` inside `simulate()`; the file is rewritten daily.
 - `UV_NO_SYNC=1` in production, after a `uv sync --frozen`, so `uv run` does not re-sync on every
   start.
+- `SYNTH_BENCHMARK_SEED` and `PYTHONHASHSEED`. Both entrypoints default them to 0, the backtest's
+  seed. For a live miner, draw one random value per deployment, for example with
+  `od -An -N4 -tu4 /dev/urandom | tr -d ' '`, and keep it in the supervisor's environment, so two
+  miners serving the same model do not send identical paths. The Terraform path does this.
 
 Behaviour to expect:
 - **Warm-up after every start.** Assets come online one by one. Until an asset is ready, its prompts
   fail with `<ASSET> is still warming up`, and each one is a miss. This lasts up to about
-  10 minutes, because the first event-calendar refresh is awaited. Avoid needless restarts.
+  10 minutes, because the first event-calendar refresh is awaited, unless a calendar stored less
+  than a day ago is on disk (the log then says `serving the calendar stored … ago`). The log says
+  `warm-up complete;` when every asset is ready (the per-asset `warm-up complete for …` lines
+  come earlier). Avoid needless restarts.
 - **A geo-blocked Binance is not fatal at startup, so it is easy to miss.**
   - `warm-up incomplete for BTC: 451 …` followed by `no partitions for BTC` errors means the store
     was never filled.
@@ -442,8 +522,9 @@ Behaviour to expect:
 
 ## Is it healthy? ("online" is not enough)
 
-PM2 "online" or Docker "Up" only means the Python process exists. Inside it, the chain sync runs in
-a background thread and the axon in another, and either can die while the process lives on. Check:
+PM2 "online", Docker "Up" or systemd "active" only means the Python process exists. Inside it, the
+chain sync runs in a background thread and the axon in another, and either can die while the
+process lives on. Check:
 
 - **The Step counter.** `Miner | Step:N` lines every 20 s must keep increasing.
   - A frozen `Step` means the sync thread died. The blacklist then works from a stale metagraph,
@@ -452,9 +533,10 @@ a background thread and the axon in another, and either can die while the proces
     `is not registered on netuid` (deregistered; no traceback follows).
 - **`Exception in thread … (run):`** in the error log, with no `Miner starting at block:` line,
   means the first sync failed before the axon started: nothing listens on the port.
-- **A climbing restart count** (`pm2 list`) usually means an exit loop, such as an unregistered
-  hotkey: the miner exits with status 0, and PM2 restarts clean exits too. Add
-  `stop_exit_codes: [0]` to the PM2 app to stop that loop.
+- **A climbing restart count** (`pm2 list`, or `systemctl show -p NRestarts synth-miner`) usually
+  means an exit loop, such as an unregistered hotkey: the miner exits with status 0, and PM2 and
+  the Terraform unit restart clean exits too. Add `stop_exit_codes: [0]` to the PM2 app to stop
+  that loop.
 - **Requests getting through.** Count `Requesting UID:` lines per validator, and compare them with
   the eligible validators from `chain_sync.py --dry-run`.
 - **The validator's view.** `/validation/miner` shows one validator's verdict on your latest prompt.
@@ -462,7 +544,8 @@ a background thread and the axon in another, and either can die while the proces
 ## Several miners, several UIDs
 
 - **Separate everything.** Give each miner its own PM2 `name`, `--axon.port` (opened in both
-  firewalls) and hotkey. The shipped configs all use the name `miner` and port 8091.
+  firewalls) and hotkey. The shipped configs all use the name `miner` and port 8091. With
+  Terraform, give each VM its own `name` and its own state (a workspace or a copy of the folder).
 - **The same model on several UIDs.** Each UID gets the same scores (FAQ #8), and each costs a
   registration and its own ramp-up. Only different models tell you anything new.
 
@@ -486,9 +569,13 @@ a background thread and the axon in another, and either can die while the proces
      dependencies. Keep those in your own project, or use `uv sync --frozen --inexact`.
    - `git pull` conflicts on files you edited, such as `synth/miner/simulations.py`, which upstream
      changes with every asset change. Keep your model in its own module to avoid that.
-   - On provisioned VMs, run `git checkout -- miner.config.js` before pulling, and keep your config
+   - On Ansible VMs, run `git checkout -- miner.config.js` before pulling, and keep your config
      in `miner.local.config.js`.
 3. **Docker:** `docker compose build --no-cache && docker compose up -d`.
 4. **synth-lib serving:** `git pull && uv sync --extra benchmark`, then restart the entrypoint.
-5. **Restart deliberately.** Every restart costs a few seconds of downtime, and in the synth-lib
+   A published champion: unpack it again from the new autoquant ref.
+5. **Terraform VM:** recreate it with `terraform apply -replace=…`, which provisions the newest
+   synth-subnet, or the champion at the `autoquant_ref` in `terraform.tfvars`
+   ([gcp-end-to-end.md](gcp-end-to-end.md), "Later changes").
+6. **Restart deliberately.** Every restart costs a few seconds of downtime, and in the synth-lib
    shell, minutes of warm-up. Restart when needed, not by reflex.
