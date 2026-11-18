@@ -188,6 +188,18 @@ if [ -f "$FRED_FILE" ]; then
     export FRED_API_KEY
 fi
 
+# synth-miner-prewarm.service: fills the champion's market data once, with no wallet and no chain.
+if [ "$#" -gt 0 ] && [ "$1" = --prewarm ]; then
+    if [ "$MODE" != champion ]; then
+        echo "--prewarm: only a champion has market data to warm up" >&2
+        exit 1
+    fi
+    cd /opt/autoquant
+    export UV_NO_SYNC=1
+    export PYTHONPATH=champions/champion
+    exec uv run python3.12 /opt/synth-miner/prewarm.py
+fi
+
 case "$MODE" in
     stock)
         cd /opt/synth-subnet
@@ -211,6 +223,36 @@ exit 1
 EOF
 chmod 0755 /opt/synth-miner/run.sh
 
+# templatefile renders this Python too: it must hold no dollar-brace and no percent-brace.
+# Once the pinned synth-lib's entrypoint.sh takes --prewarm, run.sh should call that instead.
+cat > /opt/synth-miner/prewarm.py << 'EOF'
+"""Fills the champion's minute stores and event calendar once, with no wallet and no chain, as the
+miner's own warm-up does. run.sh --prewarm starts it from /opt/autoquant, where market_data/ lives."""
+
+import logging
+from datetime import timedelta
+
+import modeling
+import pandas as pd
+from synth_lib.benchmark.generate_predictions import context_days_of
+from synth_lib.preparation.config import MARKET_DATA_DIR
+from synth_lib.preparation.event_calendar import build as calendar_build
+from synth_lib.serving.champion_miner import CALENDAR_HISTORY_DAYS
+from synth_lib.serving.serve import servable_assets, warm_up
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+warm_up(servable_assets(), context_days_of(modeling))
+now = pd.Timestamp.now(tz="UTC")
+calendar_build.update(
+    MARKET_DATA_DIR,
+    now.date() - timedelta(days=CALENDAR_HISTORY_DAYS),
+    now.date() + timedelta(days=calendar_build.DAYS_AHEAD),
+    now,
+)
+logging.getLogger("synth-miner").info("prewarm complete")
+EOF
+chmod 0644 /opt/synth-miner/prewarm.py
+
 step service
 # Started once the hotkey is on the VM: systemctl start synth-miner.
 cat > /etc/systemd/system/synth-miner.service << EOF
@@ -229,6 +271,20 @@ RestartSec=15
 
 [Install]
 WantedBy=multi-user.target
+EOF
+# Started by hand before registration, with synth-miner stopped: systemctl start synth-miner-prewarm.
+cat > /etc/systemd/system/synth-miner-prewarm.service << EOF
+[Unit]
+Description=Synth subnet miner: fill the champion's market data before registration
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=$MINER_USER
+EnvironmentFile=/etc/synth-miner/miner.env
+ExecStart=/opt/synth-miner/run.sh --prewarm
+TimeoutStartSec=30min
 EOF
 systemctl daemon-reload
 systemctl enable synth-miner

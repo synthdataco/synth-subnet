@@ -9,7 +9,7 @@ Contents:
 - 2. Pick the model
 - 3. Create the VM
 - 4. Wait for provisioning
-- 5. Copy the keys, then rehearse before registering
+- 5. Copy the keys, rehearse and pre-warm before registering
 - 6. Register
 - 7. Start and verify
 - 8. Wait for the dashboard
@@ -41,14 +41,16 @@ asks the user anything. Claude Code's own permission prompts still apply.
 2. Picks the model: the best eligible autoquant champion, the user's choice, or the stock miner.
 3. Creates the VM with `miner-setup/terraform/gcp`, and waits until it is provisioned.
 4. Copies `coldkeypub.txt`, the hotkey file and the optional FRED key file to the VM, then reboots
-   it to prove the miner starts, loads its model and reaches the chain, all before any TAO is
-   spent.
+   it to prove the miner starts, loads its model and reaches the chain. A champion then fetches its
+   market data and event calendar once. All of this happens before any TAO is spent.
 5. Registers the hotkey with `scripts/register.py`.
 6. Starts the miner at once, and checks it from the VM, the laptop, the chain and the public API.
 7. Waits in the background until the UID is on the `crypto-1h` leaderboard.
 
 The order matters. The miner exits when its hotkey has no UID, and immunity starts at
 registration, so the VM must be proven before TAO is spent, and the miner must start right after.
+A champion's market data is fetched before registration too: until an asset's data is in, its
+prompts fail, and each failed prompt scores at the field's 95th percentile.
 
 ## Inputs and conventions
 
@@ -164,7 +166,7 @@ What to do when a check fails:
 | No `default` network                                      | Stop: the Terraform module attaches to `default`. The user creates it or picks another project                                                   |
 | Wallet files or password file missing                     | "When the wallet is not ready" below                                                                                                             |
 | Password file not `-rw-------`                            | `chmod 600 ~/.synth-miner/coldkey-password`                                                                                                      |
-| `registered: true`                                        | Skip the rehearsal in step 5, and step 6. The password file is not needed                                                                        |
+| `registered: true`                                        | Skip the rehearsal and the pre-warm in step 5, and step 6. The password file is not needed                                                       |
 | Exit 3 with `is encrypted`                                | Stop: the miner cannot type a password. The user makes an unencrypted hotkey ([setup.md](setup.md))                                              |
 | Exit 4: the hotkey belongs to another coldkey             | Stop: wrong hotkey                                                                                                                               |
 | `balance_tao` below the ceiling plus the fee              | "When the wallet is not ready", step 3                                                                                                           |
@@ -305,7 +307,7 @@ done
   Every step can run again. The rerun prints its own result; the serial log still holds the old
   `FAILED` line.
 
-## 5. Copy the keys, then rehearse before registering
+## 5. Copy the keys, rehearse and pre-warm before registering
 
 Copy file to file with `scp`. Never `cat`, `head` or pipe a key file, and never copy `coldkey`:
 it stays on the laptop. `<IP>` is `miner_ip` and `<WALLET_DIR>` is `wallet_dir`
@@ -355,6 +357,29 @@ ssh SSH_OPTS miner@<IP> 'sudo systemctl stop synth-miner; sudo journalctl -b --n
   command stops it.
 - If the second line is missing, read `sudo journalctl -u synth-miner -b --no-pager | tail -n 60`
   on the VM and [troubleshooting.md](troubleshooting.md), and do not register until it shows.
+
+**Pre-warm a champion.** Skip it for the stock miner, and when the hotkey is already registered: that
+miner must start at once, and its own warm-up does the same work. The miner fetches its minute
+history and the event calendar at each start, and refuses prompts until they are in.
+`synth-miner-prewarm` fetches them once, with `synth-miner` stopped, so the miner started in step 7
+only fetches today's data. It takes several minutes, so run it in the background:
+
+```bash
+ssh SSH_OPTS miner@<IP> 't=$(date +%s); sudo systemctl start synth-miner-prewarm; systemctl show -p Result --value synth-miner-prewarm; sudo journalctl -u synth-miner-prewarm --since "@$t" --no-pager -o cat | grep -E "warm-up (complete|incomplete) for|fetch failed|prewarm complete"'
+```
+
+- Expect `success`, one `warm-up complete for <asset>` line per asset, and `prewarm complete`.
+- A `warm-up incomplete for <asset>` line: see [troubleshooting.md](troubleshooting.md), and do not
+  register until a re-run is clean.
+- `fred: fetch failed (FRED_API_KEY is not set)` only means no FRED key was copied. Another
+  `fetch failed` line leaves that source's events out until the miner's daily calendar refresh.
+- Each line gives the share of the champion's context that holds a real close. Hyperliquid serves
+  only about the last 3.5 days of minute bars, so its assets (the commodities and equities, and
+  `HYPE`) show about half on a fresh VM. The share fills in as the VM keeps running. A user who would
+  rather start with full context can re-run the pre-warm daily before registering, for
+  `CONTEXT_DAYS` (in `PROVENANCE.md`) minus 3 days.
+- Register within 24 hours of the pre-warm. After that the stored calendar is too old to be served
+  at start, and the miner waits for a fresh one; re-run the pre-warm first.
 
 ## 6. Register
 
@@ -410,9 +435,9 @@ Then print each piece of evidence:
 2. **Port, from the laptop:** `nc -z -w 5 <IP> 8091 && echo "8091 open"`.
 3. **On-chain address equals the static IP:** `register.py --check` (step 6) now shows
    `"axon": "<IP>:8091"`. If it shows `null`, run it again a minute later.
-4. **Champion warm-up.** Prompts fail with `still warming up` until `warm-up complete;`, up to
-   about 10 minutes after each start. The per-asset `warm-up complete for …` lines come earlier
-   and do not count:
+4. **Champion warm-up.** Prompts fail with `still warming up` until `warm-up complete;`: soon after
+   a start on pre-warmed data, up to about 10 minutes on a cold disk. The per-asset
+   `warm-up complete for …` lines come earlier and do not count:
 
    ```bash
    ssh SSH_OPTS miner@<IP> 'for i in $(seq 1 54); do sudo journalctl -u synth-miner -b --no-pager | grep -q "warm-up complete;" && break; sleep 10; done; sudo journalctl -u synth-miner -b --no-pager | grep -E "warm-up complete;|warm-up incomplete" | tail -n 5'
