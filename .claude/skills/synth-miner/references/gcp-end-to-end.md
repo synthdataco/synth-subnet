@@ -44,8 +44,9 @@ asks the user anything. Claude Code's own permission prompts still apply.
    it to prove the miner starts, loads its model and reaches the chain. A champion then fetches its
    market data and event calendar once. All of this happens before any TAO is spent.
 5. Registers the hotkey with `scripts/register.py`.
-6. Starts the miner at once, and checks it from the VM, the laptop, the chain and the public API.
-7. Waits in the background until the UID is on the `crypto-1h` leaderboard.
+6. Starts the miner at once, and checks it from the VM, the laptop and the chain, and on mainnet
+   from the public API.
+7. On mainnet, waits in the background until the UID is on the `crypto-1h` leaderboard.
 
 The order matters. The miner exits when its hotkey has no UID, and immunity starts at
 registration, so the VM must be proven before TAO is spent, and the miner must start right after.
@@ -54,19 +55,23 @@ prompts fail, and each failed prompt scores at the field's 95th percentile.
 
 ## Inputs and conventions
 
-| Input          | Default                                            | Used by                                               |
-| -------------- | -------------------------------------------------- | ----------------------------------------------------- |
-| Wallet, hotkey | `miner`, `default`                                 | `register.py`, Terraform `wallet_name`, `hotkey_name` |
-| Password file  | `~/.synth-miner/coldkey-password`, mode 0600       | `register.py`                                         |
-| FRED key file  | `~/.synth-miner/fred_api_key`, mode 0600, optional | copied to the VM                                      |
-| GCP project    | `gcloud config get-value project`                  | Terraform `project_id`                                |
-| Zone, machine  | `europe-west1-b`, `e2-standard-4` with a 30 GB SSD | Terraform defaults                                    |
-| Model          | the pick of `scripts/pick_champion.py`             | Terraform `champion`, `autoquant_ref`                 |
-| Price ceiling  | the user's, or else the live price plus 5%         | `register.py --max-tao`                               |
-| SSH key        | `~/.ssh/synth-miner_ed25519`, created if missing   | Terraform `ssh_public_key`, `ssh`, `scp`              |
+| Input                   | Default                                                               | Used by                                                   |
+| ----------------------- | --------------------------------------------------------------------- | --------------------------------------------------------- |
+| `<NETWORK>`, `<NETUID>` | `finney`, `50`; `test`, `247` for a testnet run                       | `REG_OPTS`, Terraform `network`, `netuid`                 |
+| `<WALLETS>`             | btcli's `wallet_path`, else `~/.bittensor/wallets`                    | `REG_OPTS`, the wallet `ls` and `scp`                     |
+| `<WALLET>`, `<HOTKEY>`  | btcli's `wallet_name` and `wallet_hotkey`, else `miner` and `default` | `REG_OPTS`, Terraform `wallet_name`, `hotkey_name`        |
+| `<PASSWORD_FILE>`       | `~/.synth-miner/coldkey-password`, mode 0600                          | `register.py --password-file`                             |
+| FRED key file           | `~/.synth-miner/fred_api_key`, mode 0600, optional                    | copied to the VM                                          |
+| `<PROJECT>`             | the user's, else `gcloud config get-value project`                    | Terraform `project_id`, `--project` on every `gcloud` run |
+| Zone, machine           | `europe-west1-b`, `e2-standard-4` with a 30 GB SSD                    | Terraform defaults                                        |
+| Model                   | the pick of `scripts/pick_champion.py`                                | Terraform `champion`, `autoquant_ref`                     |
+| Price ceiling           | the user's, or else the live price plus 5%                            | `register.py --max-tao`                                   |
+| SSH key                 | `~/.ssh/synth-miner_ed25519`, created if missing                      | Terraform `ssh_public_key`, `ssh`, `scp`                  |
 
 - `<SKILL>` is this skill's base directory, shown when the skill loads. `<REPO>` is the
   synth-subnet clone chosen in the preflight. Write both as absolute paths.
+- A value the user names wins over every default. btcli's values are in `~/.bittensor/config.yml`
+  (preflight).
 - `uv` and `terraform` stand for `~/.synth-miner/bin/uv` and `~/.synth-miner/bin/terraform` when the
   preflight installed them there. Nothing is added to the user's shell profile.
 - The commands use the defaults; substitute the user's values. Shell variables do not carry over
@@ -75,6 +80,12 @@ prompts fail, and each failed prompt scores at the field's 95th percentile.
 - `SSH_OPTS` below stands for `-i ~/.ssh/synth-miner_ed25519 -o BatchMode=yes
   -o StrictHostKeyChecking=accept-new`. Write it out in full in each `ssh` and `scp` command.
   `BatchMode` makes a missing key fail instead of prompting.
+- `REG_OPTS` stands for `--network <NETWORK> --netuid <NETUID> --wallet-path <WALLETS>
+  --wallet-name <WALLET> --hotkey-name <HOTKEY>`. Write it out in full in each `register.py`
+  command.
+- **Testnet.** A testnet run is the same run on `test`, netuid 247, paid with test TAO. The public
+  API and the dashboard cover mainnet only, so step 7.6 has a testnet check of its own and step 8
+  is skipped.
 - Give a 10-minute timeout to every command that downloads or waits: the installs, the first
   `uv run --script` of each script, `terraform init` and `apply`, and the polling loops. A loop
   that runs out of time is run again.
@@ -130,13 +141,18 @@ gcloud services enable compute.googleapis.com --project <PROJECT>
 gcloud compute networks describe default --project <PROJECT> --format='value(name)'
 ```
 
-**Wallet:**
+**Wallet.** First read btcli's wallet settings, which hold no secret, and settle `<WALLETS>`,
+`<WALLET>` and `<HOTKEY>` from them unless the user named their own:
 
 ```bash
-ls -l ~/.bittensor/wallets/miner/coldkeypub.txt ~/.bittensor/wallets/miner/hotkeys/default ~/.bittensor/wallets/miner/coldkey
-ls -l ~/.synth-miner/coldkey-password
+grep -E '^(wallet_path|wallet_name|wallet_hotkey):' ~/.bittensor/config.yml 2>/dev/null || echo "no btcli settings"
+```
+
+```bash
+ls -l <WALLETS>/<WALLET>/coldkeypub.txt <WALLETS>/<WALLET>/hotkeys/<HOTKEY> <WALLETS>/<WALLET>/coldkey
+ls -l <PASSWORD_FILE>
 ls -l ~/.synth-miner/fred_api_key || echo "no FRED key file"
-uv run --script <SKILL>/scripts/register.py --wallet-name miner --hotkey-name default --check
+uv run --script <SKILL>/scripts/register.py REG_OPTS --check
 ```
 
 - **`register.py --check`** prints one JSON object: the coldkey and hotkey addresses, `registered`,
@@ -165,7 +181,7 @@ What to do when a check fails:
 | `services enable` fails on billing                        | Stop: the user links a billing account to the project                                                                                            |
 | No `default` network                                      | Stop: the Terraform module attaches to `default`. The user creates it or picks another project                                                   |
 | Wallet files or password file missing                     | "When the wallet is not ready" below                                                                                                             |
-| Password file not `-rw-------`                            | `chmod 600 ~/.synth-miner/coldkey-password`                                                                                                      |
+| Password file readable or writable by group or others     | `chmod 600 <PASSWORD_FILE>`                                                                                                                      |
 | `registered: true`                                        | Skip the rehearsal and the pre-warm in step 5, and step 6. The password file is not needed                                                       |
 | Exit 3 with `is encrypted`                                | Stop: the miner cannot type a password. The user makes an unencrypted hotkey ([setup.md](setup.md))                                              |
 | Exit 4: the hotkey belongs to another coldkey             | Stop: wrong hotkey                                                                                                                               |
@@ -183,12 +199,12 @@ that, the run needs nothing more from them.
 
    ```bash
    cd <REPO> && uv sync --frozen && source .venv/bin/activate
-   btcli wallet create --wallet.name miner --wallet.hotkey default
+   btcli wallet create --wallet.name <WALLET> --wallet.hotkey <HOTKEY>
    ```
 
    It asks for a new coldkey password and prints two mnemonics; write both down offline. It writes
    the hotkey unencrypted, which the miner needs. A wallet that has only a coldkey gets a hotkey
-   with `btcli wallet new-hotkey --wallet.name miner --wallet.hotkey default`.
+   with `btcli wallet new-hotkey --wallet.name <WALLET> --wallet.hotkey <HOTKEY>`.
 2. **No password file.** The password is typed without echo and never appears on a command line,
    so it stays out of the shell history:
 
@@ -201,7 +217,8 @@ that, the run needs nothing more from them.
 
 3. **Not funded.** Show the coldkey address from the `--check` output and the amount to send: the
    ceiling from step 6 plus a small margin for the fee. The user sends TAO there from an exchange
-   or another wallet. Re-run `--check` until `balance_tao` covers it.
+   or another wallet. Re-run `--check` until `balance_tao` covers it. Test TAO comes from the
+   community Discord ([setup.md](setup.md), "Testnet rehearsal").
 4. **FRED key (optional, never blocks the run).** Invite the user once. Champions that read
    synth-lib's event calendar use a free [FRED API key](https://fred.stlouisfed.org/docs/api/api_key.html)
    for US macro releases (CPI, payrolls, GDP and others), and serve without them otherwise. Never ask
@@ -242,18 +259,20 @@ Write `<REPO>/miner-setup/terraform/gcp/terraform.tfvars`. It is gitignored, lik
 ```hcl
 project_id     = "<PROJECT>"
 ssh_public_key = "<the one line of ~/.ssh/synth-miner_ed25519.pub>"
-wallet_name    = "miner"
-hotkey_name    = "default"
+network        = "<NETWORK>"
+netuid         = <NETUID>
+wallet_name    = "<WALLET>"
+hotkey_name    = "<HOTKEY>"
 champion       = "<terraform.champion>"        # "" for the stock miner
 autoquant_ref  = "<terraform.autoquant_ref>"   # the full sha the picker read
 ```
 
 - The other variables keep their defaults: `name = "synth-miner"`, zone `europe-west1-b`,
-  `e2-standard-4`, a 30 GB SSD, SSH user `miner`, finney, netuid 50, port 8091.
+  `e2-standard-4`, a 30 GB SSD, SSH user `miner`, port 8091.
 - In a US region, add `binance_api_host = "https://data-api.binance.vision"` ([setup.md](setup.md)).
 - To limit SSH to the laptop, add `ssh_source_ranges = ["<public IP>/32"]`. It only narrows SSH when
   the project has no `default-allow-ssh` rule, because GCP allow rules add up
-  (`gcloud compute firewall-rules list --filter=network=default`).
+  (`gcloud compute firewall-rules list --project <PROJECT> --filter=network=default`).
 
 Before applying, say in the transcript what it creates: the VM `synth-miner` in `europe-west1-b`, a
 static IP, and firewall rules for TCP 8091 from anywhere and for SSH. They are billed while they
@@ -280,7 +299,7 @@ The startup script prints `synth-miner: provisioned` when it is done, or
 
 ```bash
 for i in $(seq 1 18); do
-  r=$(gcloud compute instances get-serial-port-output synth-miner --zone europe-west1-b 2>/dev/null \
+  r=$(gcloud compute instances get-serial-port-output synth-miner --zone europe-west1-b --project <PROJECT> 2>/dev/null \
       | grep -oE 'synth-miner: (provisioned|FAILED at [a-z-]+)' | tail -n 1)
   if [ -n "$r" ]; then echo "$r"; break; fi
   sleep 30
@@ -311,13 +330,13 @@ done
 
 Copy file to file with `scp`. Never `cat`, `head` or pipe a key file, and never copy `coldkey`:
 it stays on the laptop. `<IP>` is `miner_ip` and `<WALLET_DIR>` is `wallet_dir`
-(`/home/miner/.bittensor/wallets/miner`).
+(`/home/miner/.bittensor/wallets/<WALLET>`, whatever `<WALLETS>` is on the laptop).
 
 ```bash
-scp SSH_OPTS ~/.bittensor/wallets/miner/coldkeypub.txt miner@<IP>:<WALLET_DIR>/coldkeypub.txt
-scp SSH_OPTS ~/.bittensor/wallets/miner/hotkeys/default miner@<IP>:<WALLET_DIR>/hotkeys/default
+scp SSH_OPTS <WALLETS>/<WALLET>/coldkeypub.txt miner@<IP>:<WALLET_DIR>/coldkeypub.txt
+scp SSH_OPTS <WALLETS>/<WALLET>/hotkeys/<HOTKEY> miner@<IP>:<WALLET_DIR>/hotkeys/<HOTKEY>
 scp SSH_OPTS ~/.synth-miner/fred_api_key miner@<IP>:.config/synth-miner/fred_api_key   # only if the file exists
-ssh SSH_OPTS miner@<IP> 'chmod 600 <WALLET_DIR>/coldkeypub.txt <WALLET_DIR>/hotkeys/default; test ! -f .config/synth-miner/fred_api_key || chmod 600 .config/synth-miner/fred_api_key; test ! -e <WALLET_DIR>/coldkey && ls -l <WALLET_DIR> <WALLET_DIR>/hotkeys .config/synth-miner'
+ssh SSH_OPTS miner@<IP> 'chmod 600 <WALLET_DIR>/coldkeypub.txt <WALLET_DIR>/hotkeys/<HOTKEY>; test ! -f .config/synth-miner/fred_api_key || chmod 600 .config/synth-miner/fred_api_key; test ! -e <WALLET_DIR>/coldkey && ls -l <WALLET_DIR> <WALLET_DIR>/hotkeys .config/synth-miner'
 ```
 
 Then check the model on the VM:
@@ -341,8 +360,8 @@ Then check the model on the VM:
 
 **Rehearse with a reboot.** Skip it when the hotkey is already registered. Now that the hotkey is in
 place, the unit starts at boot, loads the model, the wallet and the metagraph, and then exits at its
-registration check with `is not registered on netuid 50`. That line in the new boot proves the boot
-start and the whole start path, before any TAO is spent:
+registration check with `is not registered on netuid <NETUID>`. That line in the new boot proves
+the boot start and the whole start path, before any TAO is spent:
 
 ```bash
 ssh SSH_OPTS miner@<IP> 'cat /proc/sys/kernel/random/boot_id'
@@ -386,7 +405,7 @@ ssh SSH_OPTS miner@<IP> 't=$(date +%s); sudo systemctl start synth-miner-prewarm
 Read the live price just before registering:
 
 ```bash
-uv run --script <SKILL>/scripts/register.py --wallet-name miner --hotkey-name default --check
+uv run --script <SKILL>/scripts/register.py REG_OPTS --check
 ```
 
 The ceiling, in τ, from this read:
@@ -395,11 +414,11 @@ The ceiling, in τ, from this read:
 - if `price_tao` is above 2 τ and the user gave no ceiling, stop and ask.
 
 ```bash
-uv run --script <SKILL>/scripts/register.py --wallet-name miner --hotkey-name default --max-tao <CEILING>
+uv run --script <SKILL>/scripts/register.py REG_OPTS --password-file <PASSWORD_FILE> --max-tao <CEILING>
 ```
 
-- It reads the password from `~/.synth-miner/coldkey-password` itself, never prompts, and prints one
-  JSON object of public data on stdout. Show it, and keep `hotkey` and `uid` for step 7.
+- It reads the password from `<PASSWORD_FILE>` itself, never prompts, and prints one JSON object of
+  public data on stdout. Show it, and keep `hotkey` and `uid` for step 7.
 - The chain refuses the registration if the price rises above `--max-tao` before inclusion.
 - A hotkey that already holds a UID is reported as registered, without reading the password, so a
   re-run never registers twice.
@@ -452,10 +471,22 @@ Then print each piece of evidence:
 
    This counts every caller, including those the blacklist then turns away. Step 6 below is the
    proof that answers are accepted.
-6. **A validator accepted an answer:**
+6. **A validator accepted an answer.** On mainnet,
    `python3 <SKILL>/scripts/miner_status.py --uid <UID>` prints `latest answer: valid`. On a UID
    recycled from an evicted miner, the first verdicts can belong to the previous owner, so look for
    one dated after the start.
+
+   On testnet the miner logs an answered request only at trace level. The proof is a UID in 5 that
+   is also in this list of the validators the blacklist lets through, with 7 printing nothing. Run
+   it on the laptop:
+
+   ```bash
+   uv run --quiet --no-project --python 3.12 --with bittensor==10.4.1 python -c 'import bittensor as bt; m = bt.Subtensor("test").metagraph(247, lite=True); print([u for u in range(int(m.n)) if m.validator_permit[u] and m.axons[u].is_serving and float(m.S[u]) > 65000])'
+   ```
+
+   An empty list, or none of its UIDs in 5 after an hour, is a quiet testnet, not a failed miner:
+   few testnet validators qualify, and none has to send prompts ([setup.md](setup.md), "Testnet
+   rehearsal").
 7. **No errors since the miner was ready.** The axon logs every rejected request as
    `<ErrorType>#<uuid>:`. Blacklist and protocol rejections are expected on an open port; anything
    else is a failed answer. `<MARK>` is `warm-up complete;` for a champion and
@@ -469,7 +500,8 @@ Then print each piece of evidence:
    [troubleshooting.md](troubleshooting.md).
 
 The miner is live when 1 to 4 hold (4 for a champion), 6 shows a valid answer, and 7 prints
-nothing. Report the UID, the IP, the model and its autoquant sha, then go on to step 8.
+nothing. Report the UID, the IP, the model and its autoquant sha, then go on to step 8 on mainnet.
+A testnet run ends here.
 
 **The seed.** Each VM draws its own random `SYNTH_BENCHMARK_SEED` (also `PYTHONHASHSEED`) into
 `/etc/synth-miner/miner.env` at provisioning, and keeps it for the life of the VM. Two deployments of
@@ -478,9 +510,9 @@ On the VM, `grep -E '^(MODE|SYNTH_BENCHMARK_SEED)=' /etc/synth-miner/miner.env` 
 
 ## 8. Wait for the dashboard
 
-The dashboard (https://synthdata.co/miners/performance) lists a UID once a validator rewards round
-includes it. Run this check in the background; it polls every 30 minutes for up to 4 hours, and
-exits as soon as the UID has a `crypto-1h` row:
+Mainnet only. The dashboard (https://synthdata.co/miners/performance) lists a UID once a validator
+rewards round includes it. Run this check in the background; it polls every 30 minutes for up to 4
+hours, and exits as soon as the UID has a `crypto-1h` row:
 
 ```bash
 for i in $(seq 1 8); do out=$(python3 <SKILL>/scripts/miner_status.py --uid <UID> 2>&1); if printf '%s\n' "$out" | grep -qE '^crypto-1h +[0-9]+/'; then printf '%s\n' "$out"; exit 0; fi; sleep 1800; done; printf '%s\n' "$out"; echo "not on the crypto-1h leaderboard after 4 h"

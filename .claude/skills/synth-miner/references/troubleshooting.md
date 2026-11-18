@@ -62,6 +62,12 @@ Every log line this file relies on is an INFO line. Without `--logging.debug`, `
   - Fix: pass the URL as `--subtensor.network ws://host:9944`, and confirm with the startup line
     `Subtensor: Network: unknown, Chain: ws://…`.
   - The `Serving miner axon … on network:` line only echoes the configured value.
+- **On testnet, `Serving miner axon … on network: wss://entrypoint-finney… with netuid: 247`.**
+  - Cause: the line prints the configured chain endpoint, whose default is finney's, not the chain
+    in use.
+  - Check: `Subtensor: Network: test, Chain: wss://test.finney…` and
+    `Running neuron on subnet: 247 … using network: wss://test.finney…` in the same start, or
+    `register.py --network test --netuid 247 … --check` showing the `axon`.
 - **`TypeError: issubclass() arg 1 must be a class`, or `The blacklist_fn function must have the
   signature …` at startup.**
   - Cause: `from __future__ import annotations` in the module that defines `forward_miner`, or a
@@ -278,8 +284,10 @@ The four common ones:
   - Cause: the entrypoint was launched from another directory, and `market_data/` resolves against
     the working directory.
   - Fix: launch from the synth-lib root, or `cd` there in the supervisor or unit.
-- **The 7-day context is short or flat for HYPE and the com-equ assets.**
-  - Cause: Hyperliquid keeps about 3.5 days of 1-minute candles.
+- **The 7-day context is short or flat for HYPE and the com-equ assets, and requests log
+  `low real-bar coverage for <ASSET>: …% — CRPS quality degraded`.**
+  - Cause: Hyperliquid keeps about 3.5 days of 1-minute candles, so a fresh store holds about half
+    of a 7-day context. The warning shows below 70%; the miner still answers.
   - Fix: let the miner run a few days, and never delete `market_data/`.
 - **`ImportError` for synth_lib or a model dependency at launch.**
   - Cause: `uv run` used a project without them.

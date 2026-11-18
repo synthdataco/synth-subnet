@@ -277,14 +277,16 @@ validator traffic.
   - Few testnet validators may qualify, and none is guaranteed to be sending prompts.
   - See who qualifies with
     `python synth/miner/chain_sync.py --axon_port 8091 --dry-run --network test --netuid 247`
-    (chain_sync takes `--network`, not `--subtensor.network`).
+    (chain_sync takes `--network`, not `--subtensor.network`). Without the synth-subnet venv, as
+    on a champion VM, use the SDK one-liner in [gcp-end-to-end.md](gcp-end-to-end.md), step 7.6.
   - For a testnet-only rehearsal with lower-stake validators, run a testnet-only miner file whose
     class overrides `blacklist` without the floor. Keep the exact signature
     `async def blacklist(self, synapse: Simulation) -> typing.Tuple[bool, str]`, in a module
     without `from __future__ import annotations`. Never launch that file on mainnet.
 - **Monitoring.** The public API and dashboards report mainnet only. On testnet, confirm traffic
   from the miner log: `Requesting UID:` lines, plus `Received prediction request from` on the stock
-  miner.
+  miner. The axon logs an answered request only at trace level, so an answer shows as a
+  `Requesting UID:` from a qualifying validator with no `<ErrorType>#<uuid>:` line after it.
 - **Rate limits.** The public testnet endpoint is rate-limited. Back off on HTTP 429, or run your
   own subtensor node.
 
