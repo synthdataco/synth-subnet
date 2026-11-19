@@ -384,10 +384,13 @@ history and the event calendar at each start, and refuses prompts until they are
 only fetches today's data. It takes several minutes, so run it in the background:
 
 ```bash
-ssh SSH_OPTS miner@<IP> 't=$(date +%s); sudo systemctl start synth-miner-prewarm; systemctl show -p Result --value synth-miner-prewarm; sudo journalctl -u synth-miner-prewarm --since "@$t" --no-pager -o cat | grep -E "warm-up (complete|incomplete) for|fetch failed|prewarm complete"'
+ssh SSH_OPTS miner@<IP> 't=$(date +%s); sudo systemctl start synth-miner-prewarm; systemctl show -p Result --value synth-miner-prewarm; sudo journalctl -u synth-miner-prewarm --since "@$t" --no-pager -o cat | grep -E "warm-up (complete|incomplete) for|fetch failed|prewarm complete|predates"'
 ```
 
 - Expect `success`, one `warm-up complete for <asset>` line per asset, and `prewarm complete`.
+- `exit-code` with `this champion's entrypoint predates --prewarm`: the `autoquant_ref` pins a
+  synth-lib without the pre-warm. Skip it; the miner then warms up after registration, for up to
+  about 10 minutes.
 - A `warm-up incomplete for <asset>` line: see [troubleshooting.md](troubleshooting.md), and do not
   register until a re-run is clean.
 - `fred: fetch failed (FRED_API_KEY is not set)` only means no FRED key was copied. Another

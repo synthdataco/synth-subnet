@@ -195,9 +195,13 @@ if [ "$#" -gt 0 ] && [ "$1" = --prewarm ]; then
         exit 1
     fi
     cd /opt/autoquant
+    # An entrypoint unpacked by an older synth-lib ignores its arguments and would start the miner.
+    if ! grep -q -- --prewarm champions/champion/entrypoint.sh; then
+        echo "--prewarm: this champion's entrypoint predates --prewarm" >&2
+        exit 1
+    fi
     export UV_NO_SYNC=1
-    export PYTHONPATH=champions/champion
-    exec uv run python3.12 /opt/synth-miner/prewarm.py
+    exec champions/champion/entrypoint.sh --prewarm
 fi
 
 case "$MODE" in
@@ -222,36 +226,6 @@ echo "unknown MODE: $MODE" >&2
 exit 1
 EOF
 chmod 0755 /opt/synth-miner/run.sh
-
-# templatefile renders this Python too: it must hold no dollar-brace and no percent-brace.
-# Once the pinned synth-lib's entrypoint.sh takes --prewarm, run.sh should call that instead.
-cat > /opt/synth-miner/prewarm.py << 'EOF'
-"""Fills the champion's minute stores and event calendar once, with no wallet and no chain, as the
-miner's own warm-up does. run.sh --prewarm starts it from /opt/autoquant, where market_data/ lives."""
-
-import logging
-from datetime import timedelta
-
-import modeling
-import pandas as pd
-from synth_lib.benchmark.generate_predictions import context_days_of
-from synth_lib.preparation.config import MARKET_DATA_DIR
-from synth_lib.preparation.event_calendar import build as calendar_build
-from synth_lib.serving.champion_miner import CALENDAR_HISTORY_DAYS
-from synth_lib.serving.serve import servable_assets, warm_up
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-warm_up(servable_assets(), context_days_of(modeling))
-now = pd.Timestamp.now(tz="UTC")
-calendar_build.update(
-    MARKET_DATA_DIR,
-    now.date() - timedelta(days=CALENDAR_HISTORY_DAYS),
-    now.date() + timedelta(days=calendar_build.DAYS_AHEAD),
-    now,
-)
-logging.getLogger("synth-miner").info("prewarm complete")
-EOF
-chmod 0644 /opt/synth-miner/prewarm.py
 
 step service
 # Started once the hotkey is on the VM: systemctl start synth-miner.
