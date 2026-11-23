@@ -34,7 +34,9 @@ https://taostats.io/subnets/50/metagraph.
   - `/v2/leaderboard/latest` can answer HTTP 200 with `null` for a competition the newest rewards
     round has not reached yet, so do not read `null` as "not ranked".
 - **Data is keyed by UID.** A recycled UID returns its previous holders' rows too. Filter by your
-  registration time from `/miners/registrations/historical`.
+  registration time from `/miners/registrations/historical`, as `miner_status.py` does.
+  `/validation/miner` has no date, so its verdict can be the previous holder's until a validator
+  records an answer from yours.
 - **Mind the volume.** `/rewards/scores` for every miner over one day is tens of megabytes. Filter
   with `miner_uid` unless you really need the whole field.
 

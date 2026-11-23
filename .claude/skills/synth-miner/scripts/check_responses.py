@@ -69,7 +69,16 @@ def check(
             time.perf_counter() - began,
         )
     elapsed = time.perf_counter() - began
-    verdict = validate_responses(response, simulation_input, f"{elapsed:.3f}")
+    try:
+        verdict = validate_responses(
+            response, simulation_input, f"{elapsed:.3f}"
+        )
+    except Exception as exc:
+        # The validator records this case as "error during validation".
+        return (
+            f"error during validation: {type(exc).__name__}: {exc}",
+            elapsed,
+        )
     if verdict != CORRECT:
         return verdict, elapsed
     non_positive = sum(

@@ -149,6 +149,10 @@ uv run python -m synth_lib.benchmark.generate_predictions \
   prompts have no prediction, and the candidate is backfilled as a late joiner.
 - **Always use 1000 paths for numbers you report.** Empirical CRPS is biased upward at fewer paths,
   and the field is scored at 1000.
+- **Use a fresh `--out-dir` for each model version or seed.** The generator skips any day whose
+  start times are already in `--out-dir`, without checking which model or seed made them, so a
+  rerun after an edit keeps the old predictions. Point the matching backtest's `--predictions-dir`
+  at the same new folder.
 
 ## The backtester
 

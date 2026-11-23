@@ -4,8 +4,9 @@
 Prints the validator's verdict on the UID's latest answer, its rank, reward
 weight and smoothed score in each subnet competition, and its Synth Ultra rows
 when it has any. With --scores, also each asset's prompts, misses and mean
-prompt score since 00:00 UTC yesterday. Standard library only; requests are
-paced about a second apart.
+prompt score since 00:00 UTC yesterday. When a new hotkey took the UID in
+that time, rows from before its registration are left out. Standard library
+only; requests are paced about a second apart.
 
     python3 miner_status.py --uid 123
     python3 miner_status.py --uid 123 --scores
@@ -91,7 +92,38 @@ def get(url: str, params: dict) -> typing.Any:
     )
 
 
-def show_validation(uid: int) -> None:
+def parse_time(text: str) -> datetime:
+    """An API timestamp, in UTC, to the second."""
+    return datetime.strptime(text[:19], "%Y-%m-%dT%H:%M:%S").replace(
+        tzinfo=timezone.utc
+    )
+
+
+def show_registration(
+    uid: int, start: str, end: str
+) -> typing.Optional[datetime]:
+    """Print and return the UID's registration time if within start..end."""
+    rows = (
+        get(
+            f"{API}/miners/registrations/historical",
+            {"from": start, "to": end},
+        )
+        or []
+    )
+    rows = [row for row in rows if row["miner_uid"] == uid]
+    if not rows:
+        return None
+    latest = max(rows, key=lambda row: parse_time(row["created_at"]))
+    since = parse_time(latest["created_at"])
+    print(
+        f"hotkey {latest['hotkey']} took this UID at"
+        f" {since:%Y-%m-%d %H:%M} UTC; earlier rows belong to the previous"
+        " holder and are left out"
+    )
+    return since
+
+
+def show_validation(uid: int, since: typing.Optional[datetime]) -> None:
     verdict = get(f"{API}/validation/miner", {"uid": uid})
     if verdict is None:
         print("latest answer: none recorded for this UID")
@@ -108,6 +140,11 @@ def show_validation(uid: int) -> None:
         else ""
     )
     print(f"latest answer: {status}{took}")
+    if since is not None:
+        print(
+            "  undated: it can still be the previous holder's until a"
+            " validator records an answer from this hotkey"
+        )
 
 
 def show_standings(uid: int) -> None:
@@ -142,7 +179,7 @@ def show_standings(uid: int) -> None:
     print("lower smoothed_score is better; share is within the competition")
 
 
-def show_ultra(uid: int, today: str) -> None:
+def show_ultra(uid: int, today: str, since: typing.Optional[datetime]) -> None:
     rows = (
         get(
             f"{API}/rewards/scores",
@@ -153,8 +190,12 @@ def show_ultra(uid: int, today: str) -> None:
     latest: dict[str, dict] = {}
     for row in rows:
         label = row["prompt_name"]
+        if not label.startswith(ULTRA_LABEL):
+            continue
+        if since is not None and parse_time(row["updated_at"]) < since:
+            continue
         newest = latest.get(label, {}).get("updated_at", "")
-        if label.startswith(ULTRA_LABEL) and row["updated_at"] > newest:
+        if row["updated_at"] > newest:
             latest[label] = row
     if not latest:
         print("\nSynth Ultra: no rows today")
@@ -168,7 +209,9 @@ def show_ultra(uid: int, today: str) -> None:
         )
 
 
-def show_scores(uid: int, start: str, end: str) -> None:
+def show_scores(
+    uid: int, start: str, end: str, since: typing.Optional[datetime]
+) -> None:
     print(
         f"\nprompts scored since {start} 00:00 UTC: crps -1 is a miss;"
         " prompt_score is 0 for the best answer and includes misses"
@@ -189,6 +232,15 @@ def show_scores(uid: int, start: str, end: str) -> None:
                 )
                 or []
             )
+            if since is not None:
+                # A prompt starts time_length seconds before its scored_time.
+                rows = [
+                    row
+                    for row in rows
+                    if parse_time(row["scored_time"])
+                    - timedelta(seconds=row["time_length"])
+                    >= since
+                ]
             misses = sum(1 for row in rows if row["crps"] == -1)
             mean = (
                 sum(row["prompt_score"] for row in rows) / len(rows)
@@ -214,14 +266,16 @@ def main() -> None:
     if not 0 <= args.uid < 256:
         parser.error("a subnet 50 UID is between 0 and 255")
 
-    today = datetime.now(timezone.utc).date()
+    day = datetime.now(timezone.utc).date()
+    today = day.isoformat()
+    yesterday = (day - timedelta(days=1)).isoformat()
     print(f"Synth miner UID {args.uid} (mainnet, netuid 50)")
-    show_validation(args.uid)
+    since = show_registration(args.uid, yesterday, today)
+    show_validation(args.uid, since)
     show_standings(args.uid)
-    show_ultra(args.uid, today.isoformat())
+    show_ultra(args.uid, today, since)
     if args.scores:
-        yesterday = (today - timedelta(days=1)).isoformat()
-        show_scores(args.uid, yesterday, today.isoformat())
+        show_scores(args.uid, yesterday, today, since)
 
 
 if __name__ == "__main__":

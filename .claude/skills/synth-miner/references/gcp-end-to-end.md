@@ -476,8 +476,9 @@ Then print each piece of evidence:
    proof that answers are accepted.
 6. **A validator accepted an answer.** On mainnet,
    `python3 <SKILL>/scripts/miner_status.py --uid <UID>` prints `latest answer: valid`. On a UID
-   recycled from an evicted miner, the first verdicts can belong to the previous owner, so look for
-   one dated after the start.
+   recycled from an evicted miner, it also prints when your hotkey took the UID. The verdict has no
+   date and can still be the previous owner's, so run it again once 5 shows validator requests.
+   About 1–2 h later, `--scores` lists only prompts that started after your registration.
 
    On testnet the miner logs an answered request only at trace level. The proof is a UID in 5 that
    is also in this list of the validators the blacklist lets through, with 7 printing nothing. Run

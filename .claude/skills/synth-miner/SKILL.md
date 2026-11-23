@@ -250,7 +250,8 @@ All four scripts live in this skill's `scripts/` folder.
   - the latest validation result;
   - rank, reward weight and smoothed score per subnet competition;
   - the UID's Synth Ultra rows, if any;
-  - with `--scores`, per-asset prompts, misses and mean prompt score since 00:00 UTC yesterday.
+  - with `--scores`, per-asset prompts, misses and mean prompt score since 00:00 UTC yesterday;
+  - on a UID taken by a new hotkey in that time, only rows from after its registration.
 
   It paces itself to about one request per second.
 - **`check_responses.py`** runs from the synth-subnet root inside its venv:
