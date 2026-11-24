@@ -103,6 +103,49 @@ def setup_wandb_alert(wandb_run):
     return wandb_handler
 
 
+# Severities Cloud Logging accepts that Python level names can take.
+GCP_SEVERITIES = frozenset(
+    {"DEBUG", "INFO", "NOTICE", "WARNING", "ERROR", "CRITICAL"}
+)
+
+
+def gcp_severity(levelno: int) -> str:
+    """Cloud Logging severity for a level without a standard name."""
+    if levelno < logging.INFO:
+        return "DEBUG"
+    if levelno == logging.INFO:
+        return "INFO"
+    if levelno < logging.WARNING:
+        return "NOTICE"
+    if levelno < logging.ERROR:
+        return "WARNING"
+    if levelno < logging.CRITICAL:
+        return "ERROR"
+    return "CRITICAL"
+
+
+def use_gcp_severities(handler: logging.Handler) -> None:
+    """Write custom levels (bittensor's TRACE and SUCCESS, EVENT) as a valid severity.
+
+    StructuredLogHandler writes the level name as the entry's severity. Cloud
+    Logging does not know these names, and GKE's logging agent can then fall
+    back to the stream's default, which for stderr is ERROR: every
+    "set_weights on chain successfully!" became an ERROR entry.
+    """
+    format_record = handler.format
+
+    def format_with_gcp_severity(record: logging.LogRecord) -> str:
+        levelname = record.levelname
+        if levelname not in GCP_SEVERITIES:
+            record.levelname = gcp_severity(record.levelno)
+        try:
+            return format_record(record)
+        finally:
+            record.levelname = levelname
+
+    handler.format = format_with_gcp_severity  # type: ignore[method-assign]
+
+
 def setup_gcp_logging(
     log_id_prefix: str | None, cycle_label: str | None = None
 ) -> tuple[
@@ -151,6 +194,12 @@ def setup_gcp_logging(
                 ),
                 None,
             )
+            # The API handler sends level numbers; only the structured
+            # (stdout/stderr) one writes level names.
+            if isinstance(
+                handler, google.cloud.logging.handlers.StructuredLogHandler
+            ):
+                use_gcp_severities(handler)
 
             # Only suppress stdout logging once we have confirmed a GCP handler is installed,
             # otherwise we risk dropping logs entirely.
