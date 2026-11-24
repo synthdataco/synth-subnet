@@ -15,10 +15,10 @@ sentinel JSON, and `bigtable_key` holds the row key used here.
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 
-import bittensor as bt
 import numpy as np
 from google.api_core import exceptions as gapi_exceptions
 from google.cloud import bigtable
@@ -27,6 +27,8 @@ from google.cloud.bigtable.row_set import RowRange, RowSet
 
 from synth.simulation_input import SimulationInput
 from synth.validator import prompt_config, response_validation_v2
+
+logger = logging.getLogger(__name__)
 
 COLUMN_FAMILY = "p"
 COLUMN_QUALIFIER = b"d"
@@ -165,7 +167,7 @@ class BigtablePredictionStorage:
             if format_validation != response_validation_v2.CORRECT:
                 continue
             if miner_uid not in miner_id_map:
-                bt.logging.warning(
+                logger.warning(
                     f"bigtable write_predictions: miner_uid {miner_uid} "
                     f"not in miners table, skipping"
                 )
@@ -200,7 +202,7 @@ class BigtablePredictionStorage:
             if code is None or code != 0:
                 failed_keys.append(key)
                 message = getattr(status, "message", "no status returned")
-                bt.logging.error(
+                logger.error(
                     f"bigtable write failed for key={key} "
                     f"code={code} message={message}"
                 )
@@ -281,7 +283,7 @@ class BigtablePredictionStorage:
                 # Corrupted / mis-shaped blob. Don't crash the whole
                 # scoring loop on one bad row — leave it as [] so just
                 # that miner is treated as no-prediction.
-                bt.logging.warning(
+                logger.warning(
                     f"bigtable read: failed to decode key={key}: {e}"
                 )
 
@@ -328,7 +330,7 @@ class BigtablePredictionStorage:
             if code is None or code != 0:
                 failed_keys.append(key)
                 message = getattr(status, "message", "no status returned")
-                bt.logging.error(
+                logger.error(
                     f"bigtable delete failed for key={key} "
                     f"code={code} message={message}"
                 )

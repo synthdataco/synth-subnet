@@ -6,7 +6,6 @@ import math
 import os
 
 
-import bittensor as bt
 import pandas as pd
 from sqlalchemy import (
     join,
@@ -54,6 +53,8 @@ from synth.validator.storage_backend import (
     BIGTABLE_SENTINEL,
 )
 
+logger = logging.getLogger(__name__)
+
 # Observed headroom for Hyperliquid to index the candle that opens at the
 # end of the prediction window. Combined with one full candle interval
 # below, it decides when a request becomes eligible for scoring. Tune via
@@ -90,7 +91,7 @@ class MinerDataHandler:
         # silent.
         self.thinning_salt = os.getenv("THINNING_SALT", "")
         if not self.thinning_salt:
-            bt.logging.warning(
+            logger.warning(
                 "THINNING_SALT is not set; density-tapering keeper "
                 "selection falls back to md5(id)."
             )
@@ -139,9 +140,7 @@ class MinerDataHandler:
             with self.engine.connect() as connection:
                 miner_id_map = self.get_miner_uids_map(connection)
         except Exception as e:
-            bt.logging.exception(
-                f"in bigtable_row_keys (got an exception): {e}"
-            )
+            logger.exception(f"in bigtable_row_keys (got an exception): {e}")
             return None
 
         return [
@@ -176,14 +175,14 @@ class MinerDataHandler:
 
                 return str(result[0].asset)
         except Exception as e:
-            bt.logging.exception(f"in get_next_asset (got an exception): {e}")
+            logger.exception(f"in get_next_asset (got an exception): {e}")
             return None
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=2),
         reraise=True,
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
     )
     @print_execution_time
     def save_responses(
@@ -251,7 +250,7 @@ class MinerDataHandler:
                         process_time,
                     ) in miner_predictions.items():
                         if miner_uid not in miner_id_map:
-                            bt.logging.error(
+                            logger.error(
                                 f"in save_responses, miner_uid {miner_uid} not found in miners table"
                             )
                             continue
@@ -303,14 +302,14 @@ class MinerDataHandler:
                     connection.execute(insert_stmt_miner_predictions)
             return validator_requests_id  # TODO: finish this: refactor to add the validator_requests_id in the score and reward table
         except Exception as e:
-            bt.logging.exception(f"in save_responses (got an exception): {e}")
+            logger.exception(f"in save_responses (got an exception): {e}")
             raise
 
     @retry(
         stop=stop_after_attempt(5),
         wait=wait_random_exponential(multiplier=7),
         reraise=True,
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
     )
     @print_execution_time
     def set_miner_scores(
@@ -385,9 +384,7 @@ class MinerDataHandler:
                     )
                     connection.execute(stmt)
         except Exception as e:
-            bt.logging.exception(
-                f"in set_miner_scores (got an exception): {e}"
-            )
+            logger.exception(f"in set_miner_scores (got an exception): {e}")
 
     def get_miner_prediction(
         self, miner_uid: int, validator_request_id: int
@@ -425,7 +422,7 @@ class MinerDataHandler:
 
             return result
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in get_miner_prediction (got an exception): {e}"
             )
             return None
@@ -485,7 +482,7 @@ class MinerDataHandler:
                 validator_request, rows, bigtable_rows
             )
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in get_predictions_by_request (got an exception): {e}"
             )
             return None
@@ -653,7 +650,7 @@ class MinerDataHandler:
 
                 return results
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in get_latest_prediction_request (got an exception): {e}"
             )
             return None
@@ -662,7 +659,7 @@ class MinerDataHandler:
         stop=stop_after_attempt(5),
         wait=wait_random_exponential(multiplier=7),
         reraise=True,
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
     )
     def insert_new_miners(self, metagraph_info: list):
         """Insert or update miners table with the provided data."""
@@ -690,9 +687,7 @@ class MinerDataHandler:
                     )
                     connection.execute(insert_stmt)
         except Exception as e:
-            bt.logging.exception(
-                f"in insert_new_miners (got an exception): {e}"
-            )
+            logger.exception(f"in insert_new_miners (got an exception): {e}")
 
     def update_metagraph_history(self, metagraph_info: list):
         try:
@@ -703,7 +698,7 @@ class MinerDataHandler:
                     )
                     connection.execute(insert_stmt)
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in update_metagraph_history (got an exception): {e}"
             )
 
@@ -757,9 +752,7 @@ class MinerDataHandler:
                     result.fetchall(), columns=list(result.keys())
                 )
         except Exception as e:
-            bt.logging.exception(
-                f"in get_miner_scores (got an exception): {e}"
-            )
+            logger.exception(f"in get_miner_scores (got an exception): {e}")
             return pd.DataFrame()
 
     def populate_miner_uid_in_miner_data(self, miner_data: list[dict]):
@@ -768,7 +761,7 @@ class MinerDataHandler:
                 with connection.begin():
                     miner_uid_map = self.get_miner_ids_map(connection)
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in populate_miner_uid_in_miner_data (got an exception): {e}"
             )
             return None
@@ -792,7 +785,7 @@ class MinerDataHandler:
                 with connection.begin():
                     return self.get_miner_uids_map(connection)
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in get_miner_uid_to_id_map (got an exception): {e}"
             )
             return None
@@ -801,7 +794,7 @@ class MinerDataHandler:
         stop=stop_after_attempt(5),
         wait=wait_random_exponential(multiplier=7),
         reraise=True,
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
     )
     @print_execution_time
     def update_miner_rewards(self, miner_rewards_data: list[dict]):
@@ -813,7 +806,7 @@ class MinerDataHandler:
                     )
                     connection.execute(insert_stmt)
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in update_miner_rewards (got an exception): {e}"
             )
 
@@ -843,7 +836,7 @@ class MinerDataHandler:
                     )
                     connection.execute(insert_stmt)
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in update_weights_history (got an exception): {e}"
             )
 
@@ -962,7 +955,7 @@ class MinerDataHandler:
                     prompt_config.time_length, bigtable_keys
                 )
         except Exception as e:
-            bt.logging.exception(
+            logger.exception(
                 f"in density_tapering_predictions (got an exception): {e}"
             )
 
@@ -1033,6 +1026,4 @@ class MinerDataHandler:
                 )
 
         except Exception as e:
-            bt.logging.exception(
-                f"in cleanup_old_history (got an exception): {e}"
-            )
+            logger.exception(f"in cleanup_old_history (got an exception): {e}")

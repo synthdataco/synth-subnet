@@ -19,7 +19,6 @@ import copy
 import logging
 
 import bittensor as bt
-from bittensor.core.metagraph import MetagraphMixin
 from tenacity import (
     before_log,
     retry,
@@ -30,9 +29,14 @@ from tenacity import (
 from abc import ABC, abstractmethod
 
 # Sync calls set weights and also resyncs the metagraph.
+from synth.base.metagraph import Metagraph
+from synth.base.synapse import Synapse
 from synth.utils.config import check_config, add_args, config
+from synth.utils.logging import setup_logging
 from synth.utils.misc import ttl_get_block
 from synth import __spec_version__ as spec_version
+
+logger = logging.getLogger(__name__)
 
 
 class BaseNeuron(ABC):
@@ -45,7 +49,7 @@ class BaseNeuron(ABC):
     neuron_type: str = "BaseNeuron"
 
     @classmethod
-    def check_config(cls, config: bt.Config):
+    def check_config(cls, config):
         check_config(cls, config)
 
     @classmethod
@@ -58,7 +62,7 @@ class BaseNeuron(ABC):
 
     subtensor: bt.Subtensor
     wallet: bt.Wallet
-    metagraph: MetagraphMixin
+    metagraph: Metagraph
     spec_version: int = spec_version
 
     @property
@@ -66,32 +70,36 @@ class BaseNeuron(ABC):
         return ttl_get_block(self)
 
     def __init__(self, config=None):
-        base_config = copy.deepcopy(config or BaseNeuron.config())
-        self.config = self.config()  # type: ignore[method-assign]
-        self.config.merge(base_config)
+        self.config = (  # type: ignore[method-assign]
+            copy.deepcopy(config) if config is not None else self.config()
+        )
         self.check_config(self.config)
 
         # Set up logging with the provided configuration.
-        bt.logging.set_config(config=self.config.logging)
+        setup_logging(self.config.logging)
 
         # If a gpu is required, set the device to cuda:N (e.g. cuda:0)
         self.device = self.config.neuron.device
 
         # Log the configuration for reference.
-        bt.logging.info(self.config)
+        logger.info(self.config)
 
         # Build Bittensor objects
         # These are core Bittensor classes to interact with the network.
-        bt.logging.info("Setting up bittensor objects.")
+        logger.info("Setting up bittensor objects.")
 
         # The wallet holds the cryptographic key pairs for the miner.
-        self.wallet = bt.Wallet(config=self.config)
+        self.wallet = bt.Wallet(
+            name=self.config.wallet.name,
+            hotkey=self.config.wallet.hotkey,
+            path=self.config.wallet.path,
+        )
         self.subtensor = self._connect_subtensor()
         self.metagraph = self._initial_metagraph_fetch()
 
-        bt.logging.info(f"Wallet: {self.wallet}")
-        bt.logging.info(f"Subtensor: {self.subtensor}")
-        bt.logging.info(f"Metagraph: {self.metagraph}")
+        logger.info(f"Wallet: {self.wallet}")
+        logger.info(f"Subtensor: {self.subtensor}")
+        logger.info(f"Metagraph: {self.metagraph}")
 
         # Check if the miner is registered on the Bittensor network before proceeding further.
         self.check_registered()
@@ -100,41 +108,40 @@ class BaseNeuron(ABC):
         self.uid = self.metagraph.hotkeys.index(
             self.wallet.hotkey.ss58_address
         )
-        bt.logging.info(
-            f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}"
+        logger.info(
+            f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.endpoint}"
         )
         self.step = 0
 
     @retry(
         stop=stop_after_attempt(10),
         wait=wait_random_exponential(multiplier=2, max=120),
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
         reraise=True,
     )
     def _connect_subtensor(self) -> bt.Subtensor:
         """Open the chain connection, retrying transient failures.
 
-        bt.Subtensor() opens the websocket in its constructor, so a blip on
-        the chain endpoint raises here and — being in __init__, outside the
-        run loop's error handling — takes the whole process down. The
-        long-running cycles tolerate the same timeouts because they catch
-        them and carry on with the previous metagraph; startup had no such
-        path, so a few seconds of unreachable endpoint cost a restart plus
-        however long kubelet's backoff had grown.
+        bt.Subtensor() connects lazily; the first block read opens the
+        websocket, so an unreachable endpoint raises here and is retried.
         """
-        return bt.Subtensor(config=self.config)
+        subtensor = bt.Subtensor(self.config.subtensor.network)
+        logger.info(
+            f"Connected to {subtensor.endpoint} at block {subtensor.block}"
+        )
+        return subtensor
 
     @retry(
         stop=stop_after_attempt(10),
         wait=wait_random_exponential(multiplier=2, max=120),
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
         reraise=True,
     )
-    def _initial_metagraph_fetch(self) -> MetagraphMixin:
-        return self.subtensor.metagraph(self.config.netuid)
+    def _initial_metagraph_fetch(self) -> Metagraph:
+        return Metagraph(self.subtensor, self.config.netuid)
 
     @abstractmethod
-    async def forward_miner(self, synapse: bt.Synapse) -> bt.Synapse: ...
+    async def forward_miner(self, synapse: Synapse) -> Synapse: ...
 
     @abstractmethod
     def forward_validator(self): ...
@@ -167,20 +174,20 @@ class BaseNeuron(ABC):
     @retry(
         stop=stop_after_attempt(10),
         wait=wait_random_exponential(multiplier=2, max=120),
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
         reraise=True,
     )
     def _is_hotkey_registered(self) -> bool:
-        return self.subtensor.is_hotkey_registered(
-            netuid=self.config.netuid,
-            hotkey_ss58=self.wallet.hotkey.ss58_address,
+        uid = self.subtensor.neurons.uid(
+            self.wallet.hotkey.ss58_address, self.config.netuid
         )
+        return uid is not None
 
     def check_registered(self):
         # --- Check for registration. Only the chain query is retried; an
         # answer of "not registered" is final and still exits.
         if not self._is_hotkey_registered():
-            bt.logging.error(
+            logger.error(
                 f"Wallet: {self.wallet} is not registered on netuid {self.config.netuid}."
                 f" Please register the hotkey using `btcli subnets register` before trying again"
             )
@@ -211,11 +218,11 @@ class BaseNeuron(ABC):
         )  # don't set weights if you're a miner
 
     def save_state(self):
-        bt.logging.warning(
+        logger.warning(
             "save_state() not implemented for this neuron. You can implement this function to save model checkpoints or other useful data."
         )
 
     def load_state(self):
-        bt.logging.warning(
+        logger.warning(
             "load_state() not implemented for this neuron. You can implement this function to load model checkpoints or other useful data."
         )

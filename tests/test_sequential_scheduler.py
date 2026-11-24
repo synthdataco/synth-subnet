@@ -104,7 +104,7 @@ class TestSelectDelay(unittest.TestCase):
                 return_value=now,
             ),
             patch(
-                "synth.utils.sequential_scheduler.bt.logging.warning"
+                "synth.utils.sequential_scheduler.logger.warning"
             ) as warn_mock,
         ):
             delay = SequentialScheduler.select_delay(
@@ -157,7 +157,7 @@ class TestSelectGridDelay(unittest.TestCase):
                 return_value=now,
             ),
             patch(
-                "synth.utils.sequential_scheduler.bt.logging.warning"
+                "synth.utils.sequential_scheduler.logger.warning"
             ) as warn_mock,
         ):
             delay = SequentialScheduler.select_delay(
@@ -180,7 +180,7 @@ class TestSelectGridDelay(unittest.TestCase):
                 return_value=now,
             ),
             patch(
-                "synth.utils.sequential_scheduler.bt.logging.warning"
+                "synth.utils.sequential_scheduler.logger.warning"
             ) as warn_mock,
         ):
             delay = SequentialScheduler.select_delay(

@@ -20,10 +20,10 @@
 from typing import Optional, Annotated, Any, Callable
 
 
-import bittensor as bt
 from pydantic import ValidationError, WrapValidator
 
 
+from synth.base.synapse import Synapse
 from synth.simulation_input import SimulationInput
 
 # This is the protocol for the miner and validator interaction.
@@ -38,9 +38,9 @@ def invalid_to_none(v: Any, handler: Callable[[Any], Any]) -> Any:
         return v
 
 
-class Simulation(bt.Synapse):
+class Simulation(Synapse):
     """
-    A synth protocol representation which uses bt.Synapse as its base.
+    A synth protocol representation which uses Synapse as its base.
     This protocol helps in handling simulation_input request and response communication between
     the miner and the validator.
 

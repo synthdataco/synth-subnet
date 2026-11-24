@@ -1,24 +1,23 @@
+import logging
 import argparse
 import bittensor as bt
 import asyncio
 import json
+
+logger = logging.getLogger(__name__)
 
 
 async def main(
     wallet_name: str, hotkey_name: str, hyperparam: str, body: dict
 ):
     wallet = bt.Wallet(name=wallet_name, hotkey=hotkey_name)
-    subtensor = bt.Subtensor(network="finney")
-    call = subtensor.substrate.compose_call(
-        call_module="AdminUtils",
-        call_function=hyperparam,
-        call_params={"netuid": 50, **body},
-    )
-    success, err_msg = subtensor.sign_and_send_extrinsic(call, wallet)
-    if success:
-        bt.logging.success(f"Set successful {success}")
+    subtensor = bt.Subtensor("finney")
+    call = getattr(bt.calls.AdminUtils, hyperparam)(netuid=50, **body)
+    result = subtensor.submit_call(call, wallet)
+    if result.success:
+        logger.info(f"Set successful {result.success}")
     else:
-        bt.logging.error(f"Set failed: {err_msg}")
+        logger.error(f"Set failed: {result.message}")
 
 
 if __name__ == "__main__":

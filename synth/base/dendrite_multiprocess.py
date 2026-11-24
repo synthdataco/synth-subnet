@@ -3,19 +3,20 @@ import threading
 import traceback
 import logging.handlers
 import time
-from typing import Union
 import asyncio
 import concurrent.futures
 from concurrent.futures.process import BrokenProcessPool
 
 
-import bittensor as bt
-from bittensor.core.settings import version_as_int
 import httpx
+from bittensor.sp_core import Keypair
 import uvloop
 
 
 from synth.base.dendrite import process_error_message
+from synth.base.metagraph import AxonInfo
+from synth.base.synapse import WIRE_VERSION, Synapse, TerminalInfo
+from synth.utils.logging import TRACE, setup_logging_from_argv
 from synth.protocol import Simulation
 from synth.simulation_input import SimulationInput
 from synth.validator.bigtable_prediction_storage import (
@@ -27,21 +28,7 @@ from synth.validator.response_validation_v2 import (
     validate_responses_with_paths,
 )
 
-
-class SubstringFilter(logging.Filter):
-    def __init__(self, forbidden):
-        super().__init__()
-        self.forbidden = forbidden
-
-    def filter(self, record):
-        # keep only those records whose formatted message does *not* contain the substring
-        return self.forbidden not in record.getMessage()
-
-
-def setup_log_filter(forbidden_substring):
-    logging.getLogger("bittensor").addFilter(
-        SubstringFilter(forbidden_substring)
-    )
+logger = logging.getLogger(__name__)
 
 
 def silent_thread_hook(args):
@@ -74,7 +61,7 @@ REQUEST_NAME = "Simulation"
 
 
 def get_endpoint_url(
-    external_ip: str, target_axon: bt.Axon, request_name: str = REQUEST_NAME
+    external_ip: str, target_axon: AxonInfo, request_name: str = REQUEST_NAME
 ):
     endpoint = (
         f"0.0.0.0:{str(target_axon.port)}"
@@ -89,21 +76,21 @@ def preprocess_synapse_for_request(
     nonce: int,
     uuid: str,
     external_ip: str,
-    target_axon_info: bt.AxonInfo,
+    target_axon_info: AxonInfo,
     synapse: Simulation,
     timeout: float,
 ) -> Simulation:
     synapse.timeout = timeout
-    synapse.dendrite = bt.TerminalInfo(
+    synapse.dendrite = TerminalInfo(
         ip=external_ip,
-        version=version_as_int,
+        version=WIRE_VERSION,
         nonce=nonce,
         uuid=uuid,
         hotkey=ss58_address,
     )
 
     # Build the Axon headers using the target axon's details
-    synapse.axon = bt.TerminalInfo(
+    synapse.axon = TerminalInfo(
         ip=target_axon_info.ip,
         port=target_axon_info.port,
         hotkey=target_axon_info.hotkey,
@@ -129,12 +116,12 @@ def process_server_response(
     else:
         # If the server responded with an error, update the local synapse state
         if local_synapse.axon is None:
-            local_synapse.axon = bt.TerminalInfo()
+            local_synapse.axon = TerminalInfo()
         local_synapse.axon.status_code = status
         local_synapse.axon.status_message = json_response.get("message")
 
     # Extract server headers and overwrite None values in local synapse headers
-    server_headers = bt.Synapse.from_headers(headers)
+    server_headers = Synapse.from_headers(headers)
 
     # Merge dendrite headers
     local_synapse.dendrite.__dict__.update(
@@ -164,7 +151,7 @@ async def call(
     uuid: str,
     external_ip: str,
     client: httpx.AsyncClient,
-    target_axon: Union[bt.AxonInfo, bt.Axon],
+    target_axon: AxonInfo,
     synapse_headers: dict,
     synapse_body: dict,
     timeout: float,
@@ -172,10 +159,6 @@ async def call(
     float32_output: bool,
 ):
     start_time = time.time()
-    target_axon = (
-        target_axon.info() if isinstance(target_axon, bt.Axon) else target_axon
-    )
-
     url = get_endpoint_url(external_ip, target_axon)
 
     synapse = Simulation(simulation_input=SimulationInput()).from_headers(
@@ -195,8 +178,9 @@ async def call(
     synapse.dendrite.signature = signature
 
     try:
-        bt.logging.trace(
-            f"dendrite | --> | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | 0 | Success"
+        logger.log(
+            TRACE,
+            f"dendrite | --> | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | 0 | Success",
         )
         # Enforce a total per-miner wall-clock timeout. httpx's `timeout` on
         # the AsyncClient is per-operation (connect/read/write/pool) and its
@@ -229,8 +213,9 @@ async def call(
         synapse = process_error_message(synapse, REQUEST_NAME, e)
 
     finally:
-        bt.logging.trace(
-            f"dendrite | <-- | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | {synapse.dendrite.status_code} | {synapse.dendrite.status_message}"
+        logger.log(
+            TRACE,
+            f"dendrite | <-- | {synapse.name} | {synapse.axon.hotkey} | {synapse.axon.ip}:{str(synapse.axon.port)} | {synapse.dendrite.status_code} | {synapse.dendrite.status_message}",
         )
 
         return await asyncio.to_thread(
@@ -331,7 +316,7 @@ async def worker(
                         uuid=uuid,
                         external_ip=external_ip,
                         client=client,
-                        target_axon=bt.AxonInfo.from_parameter_dict(
+                        target_axon=AxonInfo.from_parameter_dict(
                             axon_dict,
                         ),
                         synapse_headers=synapse_headers,
@@ -377,7 +362,7 @@ def run_chunk(
         pass
 
 
-def sign(synapse: Simulation, keypair: bt.Keypair):
+def sign(synapse: Simulation, keypair: Keypair):
     # Sign the request using the dendrite, axon info, and the synapse body hash
     message = f"{synapse.dendrite.nonce}.{synapse.dendrite.hotkey}.{synapse.axon.hotkey}.{synapse.dendrite.uuid}.{synapse.body_hash}"
     signature = f"0x{keypair.sign(message).hex()}"
@@ -391,11 +376,11 @@ def chunkify(lst, n):
 
 
 def sign_axons(
-    keypair: bt.Keypair,
+    keypair: Keypair,
     nonce: int,
     uuid: str,
     external_ip: str,
-    axons: list[bt.AxonInfo],
+    axons: list[AxonInfo],
     synapse: Simulation,
     timeout: float,
 ):
@@ -422,15 +407,17 @@ def get_process_executor(
 ) -> concurrent.futures.ProcessPoolExecutor:
     global _PROCESS_EXECUTOR
     if _PROCESS_EXECUTOR is None:
-        _PROCESS_EXECUTOR = concurrent.futures.ProcessPoolExecutor(nprocs)
+        _PROCESS_EXECUTOR = concurrent.futures.ProcessPoolExecutor(
+            nprocs, initializer=setup_logging_from_argv
+        )
     return _PROCESS_EXECUTOR
 
 
 def sync_forward_multiprocess(
-    keypair: bt.Keypair,
+    keypair: Keypair,
     uuid: str,
     external_ip: str,
-    axons: list[bt.AxonInfo],
+    axons: list[AxonInfo],
     synapse: Simulation,
     timeout: float,
     nprocs: int = 2,
@@ -442,8 +429,8 @@ def sync_forward_multiprocess(
     by the workers under `bigtable_row_keys` (aligned with `axons`, requires
     `float32_output`)."""
     global _PROCESS_EXECUTOR
-    bt.logging.debug(
-        f"Starting multiprocess forward with {nprocs} processes.", "dendrite"
+    logger.debug(
+        f"dendrite - Starting multiprocess forward with {nprocs} processes."
     )
     ss58_address = keypair.ss58_address
     synapse = synapse.model_copy()
@@ -492,9 +479,6 @@ def sync_forward_multiprocess(
 
 # Set the event loop policy to use uvloop for better performance
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-# Setup logging filter to ignore unwanted logs
-setup_log_filter("Unexpected header key encountered")
 
 # Silent EOFError
 threading.excepthook = silent_thread_hook

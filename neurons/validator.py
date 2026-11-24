@@ -1,6 +1,7 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
 # Copyright © 2023 Mode Labs
+import logging
 import time
 from datetime import datetime
 import multiprocessing as mp
@@ -21,8 +22,8 @@ import multiprocessing as mp
 
 
 from dotenv import load_dotenv
-import bittensor as bt
 
+from synth.base.synapse import Synapse
 from synth.base.validator import BaseValidatorNeuron
 
 from synth.simulation_input import SimulationInput
@@ -56,6 +57,8 @@ from synth.validator.prompt_config import (
     HIGH_FREQUENCY,
 )
 
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 CYCLE_LOW_FREQUENCY = "low_frequency"
@@ -87,7 +90,7 @@ class Validator(BaseValidatorNeuron):
 
         setup_gcp_logging(self.config.gcp.log_id_prefix)
 
-        bt.logging.info("load_state()", "__init__")
+        logger.info("__init__ - load_state()")
         self.load_state()
 
         bigtable_storage = None
@@ -119,7 +122,7 @@ class Validator(BaseValidatorNeuron):
         PriceDataProvider.assert_assets_supported(LOW_FREQUENCY.asset_list)
 
         if self.config.validator.cycle_name != "":
-            bt.logging.info(
+            logger.info(
                 f"Overriding cycle_name from config: {self.config.validator.cycle_name}"
             )
             self.cycle_name = self.config.validator.cycle_name
@@ -157,7 +160,7 @@ class Validator(BaseValidatorNeuron):
             target_config.asset_list = [
                 a for a in target_config.asset_list if a in requested
             ]
-            bt.logging.info(
+            logger.info(
                 f"Restricting {target_config.label}-frequency cycle to "
                 f"assets: {target_config.asset_list}"
             )
@@ -171,7 +174,7 @@ class Validator(BaseValidatorNeuron):
                     f"{target_config.label}-frequency cycle"
                 )
             target_config.cycle_offset_minutes = offset
-            bt.logging.info(
+            logger.info(
                 f"Anchoring {target_config.label}-frequency cycle to "
                 f"wall-clock lane {offset} "
                 f"(mod {target_config.cycle_interval_minutes})"
@@ -199,9 +202,7 @@ class Validator(BaseValidatorNeuron):
 
     @print_execution_time
     def cycle_low_frequency(self, asset: str):
-        bt.logging.info(
-            "starting the low frequency cycle", "cycle_low_frequency"
-        )
+        logger.info("cycle_low_frequency - starting the low frequency cycle")
         try:
             self.forward_prompt(asset, LOW_FREQUENCY)
         finally:
@@ -212,7 +213,7 @@ class Validator(BaseValidatorNeuron):
 
     @print_execution_time
     def cycle_scoring(self):
-        bt.logging.info("starting the scoring cycle", "cycle_scoring")
+        logger.info("cycle_scoring - starting the scoring cycle")
         while True:
             self.forward_score()
             self.refresh_metagraph(METAGRAPH_SNAPSHOT_INTERVAL_MINUTES)
@@ -220,9 +221,7 @@ class Validator(BaseValidatorNeuron):
 
     @print_execution_time
     def cycle_high_frequency(self, asset: str):
-        bt.logging.info(
-            "starting the high frequency cycle", "cycle_high_frequency"
-        )
+        logger.info("cycle_high_frequency - starting the high frequency cycle")
         try:
             self.forward_prompt(asset, HIGH_FREQUENCY)
         finally:
@@ -259,7 +258,7 @@ class Validator(BaseValidatorNeuron):
                 )
             )
         except Exception:
-            bt.logging.exception(
+            logger.exception(
                 "Metagraph refresh failed; keeping the previous miner set"
             )
             return
@@ -268,14 +267,12 @@ class Validator(BaseValidatorNeuron):
 
     @print_execution_time
     def forward_prompt(self, asset: str, prompt_config: PromptConfig):
-        bt.logging.info(
-            f"forward prompt for {asset} in {prompt_config.label} frequency",
-            "forward_prompt",
+        logger.info(
+            f"forward_prompt - forward prompt for {asset} in {prompt_config.label} frequency",
         )
         if len(self.miner_uids) == 0:
-            bt.logging.error(
-                "No miners available",
-                "forward_prompt",
+            logger.error(
+                "forward_prompt - No miners available",
             )
             return
 
@@ -316,7 +313,7 @@ class Validator(BaseValidatorNeuron):
 
         success_count = 0
         for comp in competition_config.ALL_COMPETITIONS:
-            bt.logging.info(f"forward score {comp.label}", "forward_score")
+            logger.info(f"forward_score - forward score {comp.label}")
 
             if calculate_scores(
                 self.miner_data_handler,
@@ -359,9 +356,8 @@ class Validator(BaseValidatorNeuron):
         )
         self.scores.fill(0)
 
-        bt.logging.info(
-            f"Moving averages data for owner: {moving_averages_data[-1]}",
-            "forward_score",
+        logger.info(
+            f"forward_score - Moving averages data for owner: {moving_averages_data[-1]}",
         )
 
         send_weights_to_bittensor_and_update_weights_history(
@@ -379,7 +375,7 @@ class Validator(BaseValidatorNeuron):
             self.miner_data_handler.cleanup_old_history(HIGH_FREQUENCY)
             self.miner_data_handler.cleanup_old_history(LOW_FREQUENCY)
 
-    async def forward_miner(self, _: bt.Synapse) -> bt.Synapse:
+    async def forward_miner(self, _: Synapse) -> Synapse:
         pass
 
 

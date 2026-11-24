@@ -8,10 +8,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import bittensor as bt
 import pytest
+from bittensor.sp_core import Keypair
 
 from synth.base import dendrite_multiprocess
+from synth.base.metagraph import AxonInfo
 from synth.protocol import Simulation
 from synth.simulation_input import SimulationInput
 from synth.validator.bigtable_prediction_storage import encode_paths
@@ -317,9 +318,9 @@ def real_pool(monkeypatch):
 def test_real_pool_validates_and_encodes_in_workers(real_pool, float32_output):
     invalid_output = [1779710400, 1, [1.123456789, 2.0, 3.0], _PATHS[1]]
     servers = [_serve_miner(_CORRECT_OUTPUT), _serve_miner(invalid_output)]
-    keypair = bt.Keypair.create_from_mnemonic(bt.Keypair.generate_mnemonic())
+    keypair = Keypair.create_from_mnemonic(Keypair.generate_mnemonic())
     axons = [
-        bt.AxonInfo(
+        AxonInfo(
             version=1,
             ip="127.0.0.1",
             port=server.server_address[1],

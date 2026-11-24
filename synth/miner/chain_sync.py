@@ -16,6 +16,7 @@ allowlist without reading or touching UFW — use it to preview which validator
 IPs would be allowed before applying any changes.
 """
 
+import logging
 import argparse
 import re
 import subprocess
@@ -25,6 +26,12 @@ from dataclasses import dataclass
 from typing import Iterable, List, Set
 
 import bittensor as bt
+
+from synth.base.metagraph import Metagraph
+from synth.utils.config import nest_namespace
+from synth.utils.logging import add_logging_args, setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -134,7 +141,7 @@ def apply_diff(diff: UfwDiff, axon_port: int) -> None:
             ]
         )
         if proc.returncode != 0:
-            bt.logging.error(f"ufw allow {ip} failed: {proc.stderr.strip()}")
+            logger.error(f"ufw allow {ip} failed: {proc.stderr.strip()}")
     for ip in diff.to_remove:
         proc = _run(
             [
@@ -152,11 +159,11 @@ def apply_diff(diff: UfwDiff, axon_port: int) -> None:
             ]
         )
         if proc.returncode != 0:
-            bt.logging.error(f"ufw delete {ip} failed: {proc.stderr.strip()}")
+            logger.error(f"ufw delete {ip} failed: {proc.stderr.strip()}")
     if diff.remove_blanket:
         proc = _run(["ufw", "delete", "allow", f"{axon_port}/tcp"])
         if proc.returncode != 0:
-            bt.logging.error(
+            logger.error(
                 "ufw delete blanket rule failed: " f"{proc.stderr.strip()}"
             )
 
@@ -167,25 +174,23 @@ def reconcile_once(
     axon_port: int,
     min_stake: int,
 ) -> None:
-    metagraph = subtensor.metagraph(netuid)
+    metagraph = Metagraph(subtensor, netuid)
     desired = compute_desired_allowlist(metagraph, min_stake)
     if not desired:
         # Treat an empty desired set as a sync glitch, not "nuke everything".
-        bt.logging.warning(
-            "desired allowlist is empty, skipping reconciliation"
-        )
+        logger.warning("desired allowlist is empty, skipping reconciliation")
         return
 
     state = read_ufw_status(axon_port)
     if state.has_blanket:
-        bt.logging.warning(
+        logger.warning(
             f"blanket `{axon_port}/tcp ALLOW Anywhere` rule present; "
             "will be removed once per-IP rules are applied"
         )
 
     diff = compute_diff(desired, state)
     apply_diff(diff, axon_port)
-    bt.logging.info(
+    logger.info(
         f"chain-sync cycle: desired={len(desired)} "
         f"current={len(state.current)} added={len(diff.to_add)} "
         f"removed={len(diff.to_remove)} "
@@ -245,26 +250,24 @@ def build_parser() -> argparse.ArgumentParser:
         -- test (test network)
         -- archive (archive network +300 blocks)
         -- local (local running network)
-    If this option is set it overloads subtensor.chain_endpoint with
-    an entry point node from that network.
+    A ws:// or wss:// endpoint is also accepted.
     """,
     )
-    bt.Subtensor.add_args(parser)
-    bt.logging.add_args(parser)
+    add_logging_args(parser)
     return parser
 
 
 def main(argv: Iterable[str]) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv))
-    config = bt.Config(parser)
+    args, _ = parser.parse_known_args(list(argv))
+    setup_logging(nest_namespace(args).logging)
 
-    subtensor = bt.Subtensor(config=config, network=args.network)
+    subtensor = bt.Subtensor(args.network)
 
     if args.dry_run:
         # Preview only: read the metagraph and print the validator IPs that
         # would be allowed, without reading or mutating UFW.
-        metagraph = subtensor.metagraph(args.netuid)
+        metagraph = Metagraph(subtensor, args.netuid)
         desired = compute_desired_allowlist(
             metagraph, args.validator_min_stake
         )
@@ -279,13 +282,13 @@ def main(argv: Iterable[str]) -> int:
     try:
         read_ufw_status(args.axon_port)
     except (RuntimeError, FileNotFoundError) as exc:
-        bt.logging.error(
+        logger.error(
             f"cannot read ufw status (run as root with ufw installed): "
             f"{exc}"
         )
         return 1
 
-    bt.logging.info(
+    logger.info(
         f"chain-sync started: netuid={args.netuid} "
         f"port={args.axon_port} "
         f"min_stake={args.validator_min_stake} "
@@ -302,7 +305,7 @@ def main(argv: Iterable[str]) -> int:
             )
         except Exception as exc:
             # Never mutate UFW on a failed sync — log and try again next tick.
-            bt.logging.error(f"reconcile cycle failed: {exc}")
+            logger.error(f"reconcile cycle failed: {exc}")
         time.sleep(args.interval_seconds)
 
 

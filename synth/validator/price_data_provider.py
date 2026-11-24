@@ -11,11 +11,12 @@ from tenacity import (
     wait_random_exponential,
 )
 import numpy as np
-import bittensor as bt
 
 from synth.db.models import ValidatorRequest
 from synth.utils.helpers import from_iso_to_unix_time
 from synth.utils.logging import print_execution_time
+
+logger = logging.getLogger(__name__)
 
 
 class PriceDataProvider:
@@ -77,7 +78,7 @@ class PriceDataProvider:
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=2),
         reraise=True,
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
     )
     @print_execution_time
     def fetch_data(self, validator_request: ValidatorRequest) -> list:
@@ -98,7 +99,7 @@ class PriceDataProvider:
             )
 
         if not prices or np.isnan(prices[-1]):
-            bt.logging.warning(
+            logger.warning(
                 f"missing price data for the last timestamp for asset {asset} in request {validator_request.id}"
             )
             raise ValueError(
@@ -135,7 +136,7 @@ class PriceDataProvider:
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=2),
         reraise=True,
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
     )
     def download_binance_price_data(
         self,
@@ -181,7 +182,7 @@ class PriceDataProvider:
                 response.raise_for_status()
                 data = response.json()
 
-                bt.logging.debug(
+                logger.debug(
                     f"Fetched {len(data)} klines for {symbol} [{current_start}, {current_end}]"
                 )
 
@@ -196,7 +197,7 @@ class PriceDataProvider:
                 time.sleep(loop_wait_time_seconds)
 
         if not saw_settled_witness:
-            bt.logging.warning(
+            logger.warning(
                 f"realized path not yet settled for asset {symbol}: no "
                 f"Binance kline with open time > {end_ms} ms"
             )
@@ -205,7 +206,7 @@ class PriceDataProvider:
             )
 
         if not klines:
-            bt.logging.warning(f"No data returned from Binance for {symbol}")
+            logger.warning(f"No data returned from Binance for {symbol}")
             return []
 
         normalized = {
@@ -220,7 +221,7 @@ class PriceDataProvider:
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=2),
         reraise=True,
-        before=before_log(bt.logging._logger, logging.DEBUG),
+        before=before_log(logger, logging.DEBUG),
     )
     def download_hyperliquid_price_data(
         self,
@@ -265,7 +266,7 @@ class PriceDataProvider:
                 response.raise_for_status()
                 data = response.json()
 
-                bt.logging.debug(
+                logger.debug(
                     f"Fetched {len(data)} candles for {symbol} [{current_start}, {current_end}]"
                 )
 
@@ -280,7 +281,7 @@ class PriceDataProvider:
                 time.sleep(loop_wait_time_seconds)
 
         if not saw_settled_witness:
-            bt.logging.warning(
+            logger.warning(
                 f"realized path not yet settled for asset {symbol}: no "
                 f"Hyperliquid candle with t > {end_ms} ms"
             )
@@ -289,9 +290,7 @@ class PriceDataProvider:
             )
 
         if not candles:
-            bt.logging.warning(
-                f"No data returned from Hyperliquid for {symbol}"
-            )
+            logger.warning(f"No data returned from Hyperliquid for {symbol}")
             return []
 
         normalized = {
@@ -319,7 +318,7 @@ class PriceDataProvider:
         if len(timestamps) != int(time_length / time_increment) + 1:
             # Note: this part of code should never be activated; just included for precaution
             if len(timestamps) == int(time_length / time_increment) + 2:
-                bt.logging.warning(
+                logger.warning(
                     f"Unexpected number of timestamps generated. Expected {int(time_length / time_increment) + 1} but got {len(timestamps)}. Adjusting the timestamps list by removing the extra timestamp."
                 )
                 if data["t"][-1] < timestamps[1]:

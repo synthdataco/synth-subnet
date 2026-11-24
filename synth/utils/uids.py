@@ -1,12 +1,17 @@
-import bittensor as bt
+import logging
+
+from synth.base.metagraph import Metagraph
+from synth.utils.logging import TRACE
+
+logger = logging.getLogger(__name__)
 
 
 def check_uid_availability(
-    metagraph: bt.Metagraph, uid: int, vpermit_tao_limit: int
+    metagraph: Metagraph, uid: int, vpermit_tao_limit: int
 ) -> bool:
     """Check if uid is available. The UID should be available if it is serving and has less than vpermit_tao_limit stake
     Args:
-        metagraph (:obj: bt.metagraph.Metagraph): Metagraph object
+        metagraph (Metagraph): Metagraph object
         uid (int): uid to be checked
         vpermit_tao_limit (int): Validator permit tao limit
     Returns:
@@ -14,12 +19,12 @@ def check_uid_availability(
     """
     # Filter non serving axons.
     if not metagraph.axons[uid].is_serving:
-        bt.logging.trace(f"uid {uid} is not serving")
+        logger.log(TRACE, f"uid {uid} is not serving")
         return False
     # Filter validator permit > 1024 stake.
     if metagraph.validator_permit[uid]:
         if metagraph.S[uid] > vpermit_tao_limit:
-            bt.logging.warning(f"uid {uid} is serving too high")
+            logger.warning(f"uid {uid} is serving too high")
             return False
     # Available otherwise.
     return True

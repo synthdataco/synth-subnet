@@ -1,7 +1,6 @@
 from binascii import unhexlify
 
-# mypy: disable-error-code="import-not-found"
-from bittensor_wallet import Keypair
+from bittensor.sp_core import Keypair
 
 
 def main(args):
@@ -30,7 +29,7 @@ def main(args):
 
     real_signature = unhexlify(signature.encode())
 
-    if not keypair.verify(data=message, signature=real_signature):
+    if not keypair.verify(message.encode(), real_signature):
         raise ValueError(f"Invalid signature for address={address}")
     else:
         print(f"Signature verified, signed by {address}")
