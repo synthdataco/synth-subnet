@@ -38,7 +38,7 @@ dependencies = [
 dev = [
     "pre-commit==4.1.0",
     "pytest>=8",
-    "black>=25.1.0",
+    "black>=26.10.1",
     "testcontainers>=4.9.0",
     "pylint>=4.0.9",
     "flake8==7.1.2",
